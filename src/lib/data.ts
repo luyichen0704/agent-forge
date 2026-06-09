@@ -177,11 +177,23 @@ export const PLLLM_CODE: Record<Role, Array<{ text: string; cls?: string }>> = {
 
 /* ---- flow nodes ---- */
 export const FLOW_NODES: FlowNode[] = [
-  { cap: 'trusted', label: 'user_input("张伟")'         },
-  { cap: 'data',    label: 'customer_query → customer'  },
-  { cap: 'data',    label: 'order_query → orders'       },
-  { cap: 'parsed',  label: 'Q-LLM → refund_orders'     },
-  { cap: 'write',   label: 'expedite_refund → result'  },
+  { cap: 'trusted', label: 'user_input("张伟")',        node: 'user_input',     source: 'employee 直接输入', readers: 'all',        via: '可信通道 · 无解析' },
+  { cap: 'data',    label: 'customer_query → customer', node: 'customer',       source: 'database.customers', readers: 'emp, admin', via: 'order.query 直读' },
+  { cap: 'data',    label: 'order_query → orders',      node: 'orders',         source: 'database.orders',    readers: 'emp, admin', via: 'order.query 直读' },
+  { cap: 'parsed',  label: 'Q-LLM → refund_orders',    node: 'refund_orders',  source: 'database.orders',    readers: 'emp, admin', via: 'Q-LLM (无放宽)' },
+  { cap: 'write',   label: 'expedite_refund → result', node: 'result',         source: 'refund.expedite',    readers: 'emp, admin', via: 'APIExecutor · 142ms' },
+];
+
+/* ---- live explorer streaming log lines (appended over time) ---- */
+export const LIVE_STREAM: Array<{ t: string; tag: string; cls: string; text: string }> = [
+  { t: '12:04:31', tag: 'extract', cls: 'f', text: ' order.py → entity Order, OrderItem' },
+  { t: '12:04:33', tag: 'rule',    cls: 'f', text: '    取消订单需校验 refund_status' },
+  { t: '12:04:34', tag: 'chain',   cls: 'f', text: '   order.cancel → inventory.restore + refund.create' },
+  { t: '12:04:36', tag: '+ op',    cls: 's', text: '    order.cancel  // mutation · pending_review' },
+  { t: '12:04:38', tag: 'extract', cls: 'f', text: ' refund.py → entity Refund, RefundItem' },
+  { t: '12:04:40', tag: 'rule',    cls: 'f', text: '    加急需 refund_status == pending' },
+  { t: '12:04:42', tag: '+ op',    cls: 's', text: '    refund.expedite  // mutation · pending_review' },
+  { t: '12:04:45', tag: 'extract', cls: 'f', text: ' notify.py → channel Email, SMS' },
 ];
 
 /* ---- ops operations ---- */

@@ -28,6 +28,11 @@ export interface Operation {
 export interface FlowNode {
   cap: CapKind;
   label: string;
+  /* short node name for inspector header */
+  node: string;
+  source: string;
+  readers: string;
+  via: string;
 }
 
 export interface AuditEvent {

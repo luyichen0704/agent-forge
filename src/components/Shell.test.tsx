@@ -56,6 +56,35 @@ describe('Shell — rail icons', () => {
   });
 });
 
+describe('Shell — search + subnav', () => {
+  it('typing in search filters the subnav rows', () => {
+    renderShell();
+    // admin/explore default; subnav has DatabaseExplorer etc.
+    expect(screen.getByText('DatabaseExplorer')).toBeInTheDocument();
+    const input = screen.getByLabelText('搜索') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: 'Database' } });
+    expect(screen.getByText('DatabaseExplorer')).toBeInTheDocument();
+    expect(screen.queryByText('APIExplorer')).toBeNull();
+  });
+
+  it('no-match search shows empty hint', () => {
+    renderShell();
+    const input = screen.getByLabelText('搜索') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: 'zzz-nope' } });
+    expect(screen.getByText('无匹配项')).toBeInTheDocument();
+  });
+
+  it('switching screen clears the search query', () => {
+    renderShell();
+    const input = screen.getByLabelText('搜索') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: 'Database' } });
+    expect(input.value).toBe('Database');
+    fireEvent.click(document.querySelector('[title^="对话"]') as HTMLElement);
+    const input2 = screen.getByLabelText('搜索') as HTMLInputElement;
+    expect(input2.value).toBe('');
+  });
+});
+
 describe('Shell — role differentiation', () => {
   it('customer role: only chat+flow nav enabled (others at opacity 0.3 / not-allowed)', () => {
     renderShell();

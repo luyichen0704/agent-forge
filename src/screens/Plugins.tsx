@@ -4,10 +4,10 @@ import { PLUGINS } from '../lib/data';
 import { useApp } from '../lib/appContext';
 
 export function PluginsMain() {
-  const { plugSel, setPlugSel } = useApp();
+  const { plugSel, setPlugSel, toast } = useApp();
 
   return (
-    <div className="pad16 col gap12 fill">
+    <div className="pad16 col gap12 fill scroll">
       <div
         style={{
           display: 'grid',
@@ -69,10 +69,15 @@ export function PluginsMain() {
         {/* dashed "接入新插件" entry */}
         <div
           className="card pad12 col gap8 center"
+          role="button"
+          tabIndex={0}
+          onClick={() => toast('打开接口实现向导（演示）', 'info')}
+          onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toast('打开接口实现向导（演示）', 'info'); } }}
           style={{
             borderStyle: 'dashed',
             background: 'var(--fill-2)',
             color: 'var(--ink-3)',
+            cursor: 'pointer',
           }}
         >
           <Icon n="puzzle" s={22} />
@@ -87,7 +92,7 @@ export function PluginsMain() {
 }
 
 export function PluginsAside() {
-  const { plugSel } = useApp();
+  const { plugSel, toast } = useApp();
   const p = PLUGINS.find((x) => x.key === plugSel) ?? PLUGINS[0];
 
   return (
@@ -102,7 +107,7 @@ export function PluginsAside() {
       </div>
 
       {/* body */}
-      <div className="col gap10 pad14 fill">
+      <div className="col gap10 pad14 fill scroll">
         <span className="eyebrow">接口定义 interface</span>
         <div className="code">{p.code}</div>
 
@@ -116,10 +121,14 @@ export function PluginsAside() {
           </div>
         ))}
 
-        <div className="row vcenter gap8 sm muted">
+        <button
+          className="row vcenter gap8 sm muted"
+          onClick={() => toast(`为 ${p.iface} 接入新实现（演示）`, 'info')}
+          style={{ all: 'unset', cursor: 'pointer', display: 'flex', color: 'var(--ink-3)' }}
+        >
           <Icon n="plus" s={13} />
           接入新实现
-        </div>
+        </button>
 
         <div className="divln" />
 

@@ -67,6 +67,30 @@ describe('OpsMain — role-based row filtering', () => {
     expect(banOp?.roles).not.toContain('employee');
   });
 
+  it('approving a pending op flips its status to active', () => {
+    renderWithShell();
+    navigateToOps();
+
+    // Select a pending op (order.cancel is default opsSel and pending)
+    fireEvent.click(screen.getAllByText('order.cancel')[0]);
+    // Aside shows the 批准激活 button for pending op as admin
+    const approve = screen.getByText('批准激活');
+    fireEvent.click(approve);
+    // After approval the pending action is gone and active confirmation shows
+    expect(screen.queryByText('批准激活')).toBeNull();
+    expect(screen.getByText(/已激活/)).toBeInTheDocument();
+  });
+
+  it('batch approve clears all pending rows', () => {
+    renderWithShell();
+    navigateToOps();
+    // There are pending ops initially
+    expect(screen.getAllByText('pending').length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByText('批量批准'));
+    // No pending status left in the (admin) visible table
+    expect(screen.queryByText('pending')).toBeNull();
+  });
+
   it('clicking a row changes opsSel and updates aside', () => {
     renderWithShell();
     navigateToOps();

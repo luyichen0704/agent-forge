@@ -143,7 +143,7 @@ export function Logo({ dark }: LogoProps) {
         <Icon n="hex" s={13} c="#fff" />
       </span>
       <span>
-        CaMeL<span style={{ color: 'var(--accent)' }}>·</span>Business
+        agent<span style={{ color: 'var(--accent)' }}>·</span>forge
       </span>
     </div>
   );

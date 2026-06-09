@@ -1,9 +1,10 @@
 import { Tag, Dot, Btn } from '../components/kit';
 import { AUDIT_EVENTS } from '../lib/data';
+import { useApp } from '../lib/appContext';
 
 export function AuditMain() {
   return (
-    <div className="pad16 fill">
+    <div className="pad16 fill scroll">
       <div className="card pad16">
         <div className="col">
           {AUDIT_EVENTS.map((ev, i) => (
@@ -33,12 +34,13 @@ export function AuditMain() {
 }
 
 export function AuditAside() {
+  const { toast } = useApp();
   return (
     <div className="col fill">
       <div className="pad14" style={{ borderBottom: '1px solid var(--line-2)' }}>
         <span className="h3">OPERATION_EXECUTED</span>
       </div>
-      <div className="col gap10 pad14 fill">
+      <div className="col gap10 pad14 fill scroll">
         <span className="eyebrow">before → after diff</span>
         <div className="code">
           {'refund_status:\n  '}
@@ -56,7 +58,7 @@ export function AuditAside() {
           <span className="muted">耗时</span>
           <span className="mono muted2">142ms</span>
         </div>
-        <Btn sz="sm" k="warn" ic="refresh" style={{ marginTop: 4 }}>回滚此操作 rollback</Btn>
+        <Btn sz="sm" k="warn" ic="refresh" style={{ marginTop: 4 }} onClick={() => toast('已回滚 refund.expedite · 已记录补偿事件', 'warn')}>回滚此操作 rollback</Btn>
       </div>
     </div>
   );

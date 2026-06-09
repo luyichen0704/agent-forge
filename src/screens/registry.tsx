@@ -23,7 +23,7 @@ export const SCREENS: Record<ScreenKey, ScreenConfig> = {
     title: 'Explorer · 实时探索',
     sub: 'CodeExplorer 正在阅读 company/backend',
     prog: 73,
-    tree: ['探索进程', 'Phase 1 ✓', 'Phase 2 ⏳', 'Phase 3', 'Phase 4'],
+    tree: ['探索进程', 'Phase 1 · 全局认知', 'Phase 2 · 深度探索', 'Phase 3 · 操作生成', 'Phase 4 · 能力标注'],
     treeIc: ['pulse', 'check', 'refresh', 'sliders', 'shield'],
     treeOn: 2,
     asideW: 300,
