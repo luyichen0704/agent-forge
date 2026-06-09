@@ -1,0 +1,56 @@
+# agent-forge — production compose (single host / small deployment).
+# Secrets come from deploy/env/server.env (NOT committed). TLS terminated upstream.
+#
+#   cp deploy/env/server.env.prod.example deploy/env/server.env  # then edit + chmod 0640
+#   docker compose -f docker-compose.prod.yml up -d --build
+#   docker compose -f docker-compose.prod.yml exec api alembic upgrade head
+#   docker compose -f docker-compose.prod.yml exec api python -m app.seed   # first install only
+
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: agentforge
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: agentforge
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agentforge"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    # not published to the host — only reachable on the compose network
+
+  redis:
+    image: redis:7
+    restart: unless-stopped
+    volumes:
+      - redisdata:/data
+
+  api:
+    build: ./server
+    restart: unless-stopped
+    env_file: [deploy/env/server.env]
+    depends_on:
+      db: { condition: service_healthy }
+      redis: { condition: service_started }
+    volumes:
+      - apilogs:/var/log/agent-forge
+    # exposed only to the web container; publish 127.0.0.1:8099 if probing locally
+    expose: ["8099"]
+
+  web:
+    build:
+      context: .
+      dockerfile: web.Dockerfile
+    restart: unless-stopped
+    depends_on: [api]
+    ports:
+      - "127.0.0.1:8080:80"   # put a TLS edge proxy in front of this
+
+volumes:
+  pgdata:
+  redisdata:
+  apilogs:

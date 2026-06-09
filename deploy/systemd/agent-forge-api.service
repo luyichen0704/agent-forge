@@ -1,0 +1,39 @@
+[Unit]
+Description=agent-forge API (FastAPI/gunicorn)
+After=network-online.target postgresql.service redis-server.service
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=agentforge
+Group=agentforge
+
+# code lives here; venv + gunicorn.conf.py are under server/
+WorkingDirectory=/opt/agent-forge/server
+EnvironmentFile=/etc/agent-forge/server.env
+ExecStart=/opt/agent-forge/server/.venv/bin/gunicorn -c gunicorn.conf.py app.main:app
+
+Restart=always
+RestartSec=3
+TimeoutStopSec=30
+
+# stdout/stderr → journald (journalctl -u agent-forge-api)
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=agent-forge-api
+
+# ── hardening ──
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+# the only writable paths the service needs
+ReadWritePaths=/var/log/agent-forge
+
+[Install]
+WantedBy=multi-user.target

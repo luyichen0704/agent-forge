@@ -86,3 +86,11 @@ async def test_customer_cannot_read_admin_only_operation():
         cust = await _login(c, "customer")
         r = await c.get(f"/operations/{op_id}", headers={"Authorization": f"Bearer {cust}"})
         assert r.status_code == 404
+
+
+async def test_password_login_issues_token_and_rejects_bad_password():
+    async with await _client() as c:
+        ok = await c.post("/auth/token", json={"email": "admin@company.com", "password": "demo1234"})
+        assert ok.status_code == 200 and ok.json()["acting_role"] == "admin"
+        bad = await c.post("/auth/token", json={"email": "admin@company.com", "password": "wrong"})
+        assert bad.status_code == 401
