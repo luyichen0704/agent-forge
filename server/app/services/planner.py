@@ -39,7 +39,8 @@ Return JSON with this exact shape:
   "required_confirm_level": "auto|confirm|dual",
   "steps": [
     {"step_no": 1, "kind": "query|parse|write", "op_key": "<key or null>",
-     "label": "<short human label>", "capability_out": "trusted|data|parsed|write"}
+     "label": "<short human label>", "capability_out": "trusted|data|parsed|write",
+     "args": {"<param>": "<literal or $ref>"}}
   ],
   "policy_hints": ["<short hint>", ...]
 }
@@ -91,12 +92,14 @@ def _normalise(draft: dict) -> dict:
         cap = s.get("capability_out")
         if cap not in _VALID_CAPS:
             cap = {"query": "data", "parse": "parsed", "write": "write"}[kind]
+        args = s.get("args") if isinstance(s.get("args"), dict) else {}
         steps.append({
             "step_no": s.get("step_no", i),
             "kind": kind,
             "op_key": s.get("op_key"),
             "label": str(s.get("label", "")).strip()[:200] or kind,
             "capability_out": cap,
+            "args": args,
         })
     writes = sum(1 for s in steps if s["kind"] == "write")
     confirm = draft.get("required_confirm_level")

@@ -22,7 +22,7 @@ from app.models.registry import Operation, OperationPermission
 from app.models.audit import DataflowEdge, DataflowNode, Trace
 from app.executors import get_executor
 from app.policies.engine import Decision, Identity, StepCtx, evaluate_step
-from app.services import audit, planner
+from app.services import audit, planner, qparser
 from app.services.capabilities import Capability
 
 CAP_FOR_KIND = {"query": "data", "parse": "parsed", "write": "write"}
@@ -51,6 +51,18 @@ async def _available_operations(db: AsyncSession, tenant_id: uuid.UUID, role: st
             "scope": next((p.condition_json.get("scope") for p in perms if p.condition_json), None),
         })
     return out
+
+
+async def _eligible_admin_count(db: AsyncSession, tenant_id: uuid.UUID) -> int:
+    from app.models.identity import Role, User, UserRole
+    rows = (
+        await db.execute(
+            select(User.id).join(UserRole, UserRole.user_id == User.id)
+            .join(Role, Role.id == UserRole.role_id)
+            .where(User.tenant_id == tenant_id, Role.key == "admin", User.is_active.is_(True))
+        )
+    ).scalars().all()
+    return len(set(rows))
 
 
 async def create_plan(
@@ -90,44 +102,56 @@ async def create_plan(
     plan_required = "auto"
     from app.services.capabilities import stricter_confirm
 
+    eligible_admins = await _eligible_admin_count(db, tenant_id)
+
     for s in draft["steps"]:
         op = op_by_key.get(s["op_key"] or "")
         step_cap = Capability.of(CAP_FOR_KIND.get(s["kind"], "data"))
         running_cap = running_cap.merge(step_cap)
 
+        # run policy for EVERY step so identity constraints (e.g. customer
+        # self-scope) are computed and persisted, not just for writes.
+        ctx = StepCtx(
+            op_key=s["op_key"] or "", op_kind=("mutation" if s["kind"] == "write" else "query"),
+            op_confirm=op["confirm_level"] if op else ("confirm" if s["kind"] == "write" else "auto"),
+            risk=op["risk"] if op else ("high" if s["kind"] == "write" else "low"),
+            kwargs={}, arg_caps=running_cap,
+            allowed_roles=op["roles"] if op else (["admin"] if s["kind"] == "write" else
+                                                  ["customer", "employee", "admin"]),
+            permission_scope=op.get("scope") if op else None,
+        )
+        decision = evaluate_step(identity, ctx)
+        if decision.effect == "deny":
+            await audit.append_event(db, trace.id, "POLICY_DENIED",
+                                     {"op": s["op_key"], "reason": decision.reason}, cap="trusted")
+            plan.status = "denied"
+            await db.flush()
+            return plan
+
+        # persisted, server-trusted args: planner's args + policy-injected scope
+        step_args = dict(s.get("args") or {})
+        step_args.update(decision.injected)  # e.g. user_id forced to caller for customer
+
         approval_id = None
         if s["kind"] == "write":
-            ctx = StepCtx(
-                op_key=s["op_key"] or "", op_kind="mutation",
-                op_confirm=op["confirm_level"] if op else "confirm",
-                risk=op["risk"] if op else "high",
-                kwargs={}, arg_caps=running_cap,
-                allowed_roles=op["roles"] if op else ["admin"],
-                permission_scope=op.get("scope") if op else None,
-            )
-            decision = evaluate_step(identity, ctx)
-            if decision.effect == "deny":
-                await audit.append_event(db, trace.id, "POLICY_DENIED",
-                                         {"op": s["op_key"], "reason": decision.reason}, cap="trusted")
-                plan.status = "denied"
-                await db.flush()
-                return plan
             plan_required = stricter_confirm(plan_required, decision.required_confirm)
-            req_votes = 2 if decision.required_confirm == "dual" else 1
-            ar = ApprovalRequest(
-                tenant_id=tenant_id, trace_id=trace.id, target_type="plan_step",
-                target_id=s["op_key"] or "", confirm_level=decision.required_confirm,
-                status="pending", requested_by=uuid.UUID(identity.user_id),
-                required_votes=req_votes, expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
-            )
-            db.add(ar)
-            await db.flush()
-            approval_id = ar.id
+            # `confirm` = the plan owner's own confirmation is the gate (no separate vote).
+            # `dual` = TWO distinct admins must vote → create a real approval request.
+            if decision.required_confirm == "dual":
+                ar = ApprovalRequest(
+                    tenant_id=tenant_id, trace_id=trace.id, target_type="plan_step",
+                    target_id=s["op_key"] or "", confirm_level="dual",
+                    status="pending", requested_by=uuid.UUID(identity.user_id),
+                    required_votes=2, expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
+                )
+                db.add(ar)
+                await db.flush()
+                approval_id = ar.id
 
         db.add(PlanStep(
             plan_id=plan.id, step_no=s["step_no"], kind=s["kind"], op_key=s["op_key"],
             label=s["label"], capability_in=running_cap.as_list(), capability_out=s["capability_out"],
-            approval_request_id=approval_id, status="planned",
+            approval_request_id=approval_id, status="planned", input_refs_json=step_args,
         ))
 
     await audit.append_event(db, trace.id, "POLICY_EVALUATED",
@@ -142,7 +166,10 @@ async def create_plan(
     else:
         plan.status = "awaiting_confirm"
         await audit.append_event(db, trace.id, "CONFIRMATION_REQUESTED",
-                                 {"level": plan_required, "writes": draft["writes"]}, cap="parsed")
+                                 {"level": plan_required, "writes": draft["writes"],
+                                  "eligible_admins": eligible_admins,
+                                  "satisfiable": plan_required != "dual" or eligible_admins >= 2},
+                                 cap="parsed")
     await db.flush()
     return plan
 
@@ -209,42 +236,76 @@ async def confirm_plan(db: AsyncSession, plan: ExecutionPlan, *, approver: Ident
     return plan
 
 
+async def _op_executor(db: AsyncSession, tenant_id: uuid.UUID, op_key: str):
+    op = (
+        await db.execute(
+            select(Operation).where(Operation.tenant_id == tenant_id, Operation.op_key == op_key)
+            .order_by(Operation.version.desc())
+        )
+    ).scalars().first()
+    return get_executor(op.executor_binding if op else None)
+
+
 async def _execute_plan(db: AsyncSession, plan: ExecutionPlan, trace: Trace, steps: list[PlanStep]) -> dict:
-    """Run the steps. query→read, parse→Q-LLM, write→executor with resolved args.
-    Returns the runtime context of step outputs (overridden in Batch 3 wiring)."""
-    ctx: dict = {}
+    """The real CaMeL chain at runtime:
+      query → executor.read (real biz_records, owner-scoped)
+      parse → Q-LLM over the *fetched data slice* (output stays `parsed`)
+      write → executor.execute with args resolved from prior outputs + injected scope
+    """
+    rows: list[dict] = []        # accumulated query data (capability: data)
+    selected: list[str] = []     # Q-LLM parsed selection (capability: parsed)
+
     for st in steps:
-        if st.kind != "write" or not st.op_key:
+        if st.kind == "query" and st.op_key:
+            ex = await _op_executor(db, trace.tenant_id, st.op_key)
+            fetched = await ex.read(db, trace.tenant_id, st.op_key, dict(st.input_refs_json or {}))
+            rows.extend(fetched)
             st.status = "done"
-            continue
-        op = (
-            await db.execute(
-                select(Operation).where(
-                    Operation.tenant_id == trace.tenant_id, Operation.op_key == st.op_key
-                ).order_by(Operation.version.desc())
-            )
-        ).scalars().first()
-        ex = get_executor(op.executor_binding if op else None)
-        idem = f"{plan.id}:{st.step_no}"
-        # idempotency: reuse a prior successful execution with the same key
-        existing = (
-            await db.execute(select(Execution).where(Execution.idempotency_key == idem))
-        ).scalar_one_or_none()
-        if existing is not None:
-            st.status = "done" if existing.status == "ok" else "error"
-            continue
-        kwargs = dict(st.input_refs_json or {})
-        started = datetime.now(timezone.utc)
-        res = await ex.execute(db, trace.tenant_id, st.op_key, kwargs)
-        latency = int((datetime.now(timezone.utc) - started).total_seconds() * 1000)
-        db.add(Execution(
-            trace_id=plan.trace_id, plan_step_id=st.id, op_key=st.op_key,
-            executor=ex.name, status="error" if res.error_code else "ok",
-            before_state=res.before_state, after_state=res.after_state,
-            idempotency_key=idem, latency_ms=latency, error_code=res.error_code,
-        ))
-        st.status = "done" if not res.error_code else "error"
-        await audit.append_event(db, plan.trace_id, "OPERATION_EXECUTED",
-                                 {"op": st.op_key, "executor": ex.name, "latency_ms": latency,
-                                  "error": res.error_code}, cap="write")
-    return ctx
+            await audit.append_event(db, plan.trace_id, "DATA_READ",
+                                     {"op": st.op_key, "rows": len(fetched)}, cap="data")
+
+        elif st.kind == "parse":
+            # Q-LLM is actually invoked here, on quarantined data only
+            parsed = await qparser.parse(db, plan.trace_id, instruction=st.label, data_slice=rows)
+            ids = parsed.get("selected_ids") or []
+            if not ids:  # fallback: derive pending refunds from the fetched rows
+                ids = [r.get("key") for r in rows if r.get("refund_status") == "pending"]
+            selected = [i for i in ids if i]
+            st.status = "done"
+            await audit.append_event(db, plan.trace_id, "QLLM_PARSED",
+                                     {"selected": len(selected), "capability": "parsed"}, cap="parsed")
+
+        elif st.kind == "write" and st.op_key:
+            idem = f"{plan.id}:{st.step_no}"
+            existing = (
+                await db.execute(select(Execution).where(Execution.idempotency_key == idem))
+            ).scalar_one_or_none()
+            if existing is not None:
+                st.status = "done" if existing.status == "ok" else "error"
+                continue
+            # resolve target: explicit arg → Q-LLM selection → first fetched row
+            kwargs = dict(st.input_refs_json or {})
+            order_id = kwargs.get("order_id") or (selected[0] if selected else None) \
+                or (rows[0].get("key") if rows else None)
+            if order_id:
+                kwargs["order_id"] = order_id
+            kwargs.pop("user_id", None)  # not an executor arg; scope already applied at read
+            st.input_refs_json = kwargs  # persist the resolved args
+            ex = await _op_executor(db, trace.tenant_id, st.op_key)
+            started = datetime.now(timezone.utc)
+            res = await ex.execute(db, trace.tenant_id, st.op_key, kwargs)
+            latency = int((datetime.now(timezone.utc) - started).total_seconds() * 1000)
+            db.add(Execution(
+                trace_id=plan.trace_id, plan_step_id=st.id, op_key=st.op_key,
+                executor=ex.name, status="error" if res.error_code else "ok",
+                before_state=res.before_state, after_state=res.after_state,
+                idempotency_key=idem, latency_ms=latency, error_code=res.error_code,
+            ))
+            st.status = "done" if not res.error_code else "error"
+            await audit.append_event(db, plan.trace_id, "OPERATION_EXECUTED",
+                                     {"op": st.op_key, "executor": ex.name, "latency_ms": latency,
+                                      "target": order_id, "error": res.error_code}, cap="write")
+        else:
+            st.status = "done"
+
+    return {"rows": rows, "selected": selected}

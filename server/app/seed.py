@@ -35,6 +35,7 @@ USERS = [
     ("zhang@demo.com", "张伟", "customer"),
     ("wei@company.com", "员工小卫", "employee"),
     ("admin@company.com", "管理员", "admin"),
+    ("admin2@company.com", "管理员乙", "admin"),  # 2nd admin so dual_approval can complete
 ]
 
 # op_key, kind, confirm, risk, status, executor, role->scope grants
@@ -156,11 +157,16 @@ async def run() -> None:
                 db.add(PluginRegistration(plugin_id=p.id, impl_name=impl_name, status=st,
                                           health="ok" if st == "ok" else "unknown"))
 
-        # ---- business records (real state the executors mutate) ----
-        db.add(BizRecord(tenant_id=tid, kind="refund", key="#3901", owner_user_id=users["customer"].id,
-                         state_json={"amount": 299, "refund_status": "pending", "customer": "张伟"}))
-        db.add(BizRecord(tenant_id=tid, kind="order", key="#3901", owner_user_id=users["customer"].id,
-                         state_json={"amount": 299, "status": "shipped", "customer": "张伟"}))
+        # ---- business records (real state the executors read & mutate) ----
+        cust_id = users["customer"].id
+        db.add(BizRecord(tenant_id=tid, kind="customer", key="张伟", owner_user_id=cust_id,
+                         state_json={"id": str(cust_id), "name": "张伟", "tier": "vip"}))
+        db.add(BizRecord(tenant_id=tid, kind="refund", key="#3901", owner_user_id=cust_id,
+                         state_json={"order_id": "#3901", "amount": 299, "refund_status": "pending", "customer": "张伟"}))
+        db.add(BizRecord(tenant_id=tid, kind="refund", key="#3902", owner_user_id=cust_id,
+                         state_json={"order_id": "#3902", "amount": 88, "refund_status": "done", "customer": "张伟"}))
+        db.add(BizRecord(tenant_id=tid, kind="order", key="#3901", owner_user_id=cust_id,
+                         state_json={"order_id": "#3901", "amount": 299, "status": "shipped", "customer": "张伟"}))
         await db.flush()
 
         # ---- one fully-formed historical trace (Flow/Audit have real data) ----

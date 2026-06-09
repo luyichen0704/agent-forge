@@ -2,7 +2,41 @@ import { Icon, Btn, Chip, Tag, Dot, Note } from '../components/kit';
 import { useApp } from '../lib/appContext';
 import { useMe } from '../features/auth';
 import { useOperations, usePublishOperation, useDisableOperation } from '../features/operations';
-import type { Operation } from '../api/types';
+import { useApprovals, useVote } from '../features/approvals';
+import type { ApprovalRequest, Operation } from '../api/types';
+
+function ApprovalRow({ ar }: { ar: ApprovalRequest }) {
+  const { toast } = useApp();
+  const vote = useVote(ar.id);
+  return (
+    <div className="card pad12 row vcenter gap12">
+      <Tag k="write">{ar.confirm_level}</Tag>
+      <div className="col fill">
+        <span className="b sm mono">{ar.target_id}</span>
+        <span className="xs muted">{ar.approve_votes}/{ar.required_votes} 批准 · {ar.status}</span>
+      </div>
+      <Btn sz="sm" k="go" ic="check" disabled={vote.isPending || ar.status !== 'pending'}
+        onClick={() => vote.mutate({ decision: 'approve' }, {
+          onSuccess: (r) => toast(r.status === 'approved' ? '已批准并满足条件' : `已投票 (${r.approve_votes}/${r.required_votes})`),
+          onError: (e) => toast((e as Error).message, 'warn'),
+        })}>批准</Btn>
+      <Btn sz="sm" k="warn" ic="x" disabled={vote.isPending || ar.status !== 'pending'}
+        onClick={() => vote.mutate({ decision: 'reject' }, { onSuccess: () => toast('已拒绝', 'warn') })}>拒绝</Btn>
+    </div>
+  );
+}
+
+function ApprovalsPanel() {
+  const { data } = useApprovals('pending');
+  const items = data?.items ?? [];
+  return (
+    <div className="col gap8" style={{ marginTop: 16 }}>
+      <span className="eyebrow">待人工审批 · dual approval（{items.length}）</span>
+      {items.length === 0 && <span className="sm muted">暂无待审批请求。</span>}
+      {items.map((ar) => <ApprovalRow key={ar.id} ar={ar} />)}
+    </div>
+  );
+}
 
 function matchTree(o: Operation, treeSel: number): boolean {
   switch (treeSel) {
@@ -71,6 +105,7 @@ export function OpsMain() {
             <Chip ic="puzzle">Policy: Python · OPA · Casbin</Chip>
             <Chip ic="bolt">Executor: API · Function · SQL · RPA</Chip>
           </div>
+          <ApprovalsPanel />
         </div>
       )}
     </div>
