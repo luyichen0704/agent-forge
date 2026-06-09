@@ -14,3 +14,7 @@ __pycache__/
 .ruff_cache/
 server/pgdata/
 .env.local
+
+# 中期提交材料（不入库）
+AI Agent中期材料/
+AI Agent中期材料模板/
