@@ -36,6 +36,8 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     } catch {
       /* ignore */
     }
+    // a dead/expired token must not linger and loop forever
+    if (res.status === 401) setToken(null);
     throw new ApiError(res.status, detail);
   }
   if (res.status === 204) return undefined as T;

@@ -165,6 +165,10 @@ async def _build_dataflow(db, trace_id, instruction, steps):
 
 
 async def confirm_plan(db: AsyncSession, plan: ExecutionPlan, *, approver: Identity) -> ExecutionPlan:
+    # lock the plan row → atomic state transition, no double execution
+    plan = (
+        await db.execute(select(ExecutionPlan).where(ExecutionPlan.id == plan.id).with_for_update())
+    ).scalar_one()
     if plan.status not in ("awaiting_confirm", "confirmed"):
         return plan
 
@@ -193,6 +197,22 @@ async def confirm_plan(db: AsyncSession, plan: ExecutionPlan, *, approver: Ident
 
     trace = await db.get(Trace, plan.trace_id)
     plan.status = "executing"
+    ctx = await _execute_plan(db, plan, trace, steps)
+
+    had_error = any(st.status == "error" for st in steps)
+    await audit.append_event(db, plan.trace_id, "DATAFLOW_SNAPSHOT", {"steps": len(steps)}, cap="data")
+    await audit.append_event(db, plan.trace_id, "RESPONSE_SENT",
+                             {"status": "partial_failed" if had_error else "done"}, cap="data")
+    plan.status = "partial_failed" if had_error else "done"
+    trace.status = "open" if had_error else "closed"
+    await db.flush()
+    return plan
+
+
+async def _execute_plan(db: AsyncSession, plan: ExecutionPlan, trace: Trace, steps: list[PlanStep]) -> dict:
+    """Run the steps. query→read, parse→Q-LLM, write→executor with resolved args.
+    Returns the runtime context of step outputs (overridden in Batch 3 wiring)."""
+    ctx: dict = {}
     for st in steps:
         if st.kind != "write" or not st.op_key:
             st.status = "done"
@@ -205,25 +225,26 @@ async def confirm_plan(db: AsyncSession, plan: ExecutionPlan, *, approver: Ident
             )
         ).scalars().first()
         ex = get_executor(op.executor_binding if op else None)
+        idem = f"{plan.id}:{st.step_no}"
+        # idempotency: reuse a prior successful execution with the same key
+        existing = (
+            await db.execute(select(Execution).where(Execution.idempotency_key == idem))
+        ).scalar_one_or_none()
+        if existing is not None:
+            st.status = "done" if existing.status == "ok" else "error"
+            continue
+        kwargs = dict(st.input_refs_json or {})
         started = datetime.now(timezone.utc)
-        res = await ex.execute(db, trace.tenant_id, st.op_key, dict(st.input_refs_json or {}))
+        res = await ex.execute(db, trace.tenant_id, st.op_key, kwargs)
         latency = int((datetime.now(timezone.utc) - started).total_seconds() * 1000)
-        execution = Execution(
+        db.add(Execution(
             trace_id=plan.trace_id, plan_step_id=st.id, op_key=st.op_key,
             executor=ex.name, status="error" if res.error_code else "ok",
             before_state=res.before_state, after_state=res.after_state,
-            idempotency_key=f"{plan.id}:{st.step_no}", latency_ms=latency, error_code=res.error_code,
-        )
-        db.add(execution)
+            idempotency_key=idem, latency_ms=latency, error_code=res.error_code,
+        ))
         st.status = "done" if not res.error_code else "error"
         await audit.append_event(db, plan.trace_id, "OPERATION_EXECUTED",
                                  {"op": st.op_key, "executor": ex.name, "latency_ms": latency,
                                   "error": res.error_code}, cap="write")
-
-    await audit.append_event(db, plan.trace_id, "DATAFLOW_SNAPSHOT",
-                             {"steps": len(steps)}, cap="data")
-    await audit.append_event(db, plan.trace_id, "RESPONSE_SENT", {"status": "done"}, cap="data")
-    plan.status = "done"
-    trace.status = "closed"
-    await db.flush()
-    return plan
+    return ctx

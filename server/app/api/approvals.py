@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -44,7 +45,7 @@ async def list_requests(
 
 
 class VoteIn(BaseModel):
-    decision: str = "approve"  # approve | reject
+    decision: Literal["approve", "reject"] = "approve"
     comment: str = ""
 
 
@@ -55,11 +56,21 @@ async def cast_vote(
 ) -> dict:
     if p.role != "admin":
         raise HTTPException(status_code=403, detail="only admins may vote on approvals")
-    ar = await db.get(ApprovalRequest, req_id)
+    # lock the request row so concurrent votes resolve the state machine atomically
+    ar = (
+        await db.execute(select(ApprovalRequest).where(ApprovalRequest.id == req_id).with_for_update())
+    ).scalar_one_or_none()
     if ar is None or ar.tenant_id != p.tenant_id:
         raise HTTPException(status_code=404, detail="not found")
     if ar.status != "pending":
         raise HTTPException(status_code=409, detail=f"request already {ar.status}")
+    if ar.expires_at and ar.expires_at < datetime.now(timezone.utc):
+        ar.status = "expired"
+        await db.commit()
+        raise HTTPException(status_code=409, detail="approval request expired")
+    # the requester may not approve their own high-risk request
+    if ar.requested_by == p.user.id and body.decision == "approve":
+        raise HTTPException(status_code=403, detail="requester cannot self-approve")
 
     # one vote per approver (DB unique constraint also guards this)
     existing = (

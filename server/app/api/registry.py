@@ -68,7 +68,10 @@ async def get_operation(
     op = await db.get(Operation, op_id)
     if op is None or op.tenant_id != p.tenant_id:
         raise HTTPException(status_code=404, detail="not found")
-    return await _serialize(db, op)
+    data = await _serialize(db, op)
+    if p.role != "admin" and p.role not in data["roles"]:
+        raise HTTPException(status_code=404, detail="not found")
+    return data
 
 
 def _require_admin(p: Principal) -> None:

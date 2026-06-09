@@ -101,14 +101,18 @@ async def send_message(
         db, tenant_id=p.tenant_id, session_id=session_id,
         identity=p.identity, instruction=body.content,
     )
-    plan_data = await _serialize_plan(db, plan)
 
     if plan.status == "denied":
         reply = "该请求被策略拒绝，未生成可执行计划。"
     elif plan.required_confirm_level == "auto":
-        reply = f"已规划并自动执行：{plan.intent}"
+        # no human gate → execute the (read-only) plan now and report truthfully
+        plan = await orchestrator.confirm_plan(db, plan, approver=p.identity)
+        reply = (f"已规划并执行：{plan.intent}" if plan.status == "done"
+                 else f"已规划，但执行未完全成功（{plan.status}）。")
     else:
         reply = f"我将执行以下操作，涉及 {plan.writes} 个写操作，需要确认（{plan.required_confirm_level}）。"
+
+    plan_data = await _serialize_plan(db, plan)
 
     db.add(ChatMessage(session_id=session_id, role="assistant", content=reply,
                        plan_id=plan.id, created_at=datetime.now(timezone.utc).isoformat()))
@@ -116,13 +120,25 @@ async def send_message(
     return {"reply": reply, "plan": plan_data}
 
 
+async def _owned_plan(db: AsyncSession, p: Principal, plan_id: uuid.UUID) -> ExecutionPlan:
+    """Load a plan, enforcing tenant + ownership (or admin). Prevents IDOR."""
+    plan = await db.get(ExecutionPlan, plan_id)
+    if plan is None:
+        raise HTTPException(status_code=404, detail="plan not found")
+    sess = await db.get(ChatSession, plan.session_id)
+    if sess is None or sess.tenant_id != p.tenant_id:
+        raise HTTPException(status_code=404, detail="plan not found")
+    if sess.user_id != p.user.id and not p.is_admin:
+        # don't leak existence to other users
+        raise HTTPException(status_code=404, detail="plan not found")
+    return plan
+
+
 @router.get("/plans/{plan_id}")
 async def get_plan(
     plan_id: uuid.UUID, p: Principal = Depends(get_principal), db: AsyncSession = Depends(get_db)
 ) -> dict:
-    plan = await db.get(ExecutionPlan, plan_id)
-    if plan is None:
-        raise HTTPException(status_code=404, detail="plan not found")
+    plan = await _owned_plan(db, p, plan_id)
     return await _serialize_plan(db, plan)
 
 
@@ -130,9 +146,7 @@ async def get_plan(
 async def confirm_plan(
     plan_id: uuid.UUID, p: Principal = Depends(get_principal), db: AsyncSession = Depends(get_db)
 ) -> dict:
-    plan = await db.get(ExecutionPlan, plan_id)
-    if plan is None:
-        raise HTTPException(status_code=404, detail="plan not found")
+    plan = await _owned_plan(db, p, plan_id)
     plan = await orchestrator.confirm_plan(db, plan, approver=p.identity)
     await db.commit()
     data = await _serialize_plan(db, plan)
@@ -144,9 +158,7 @@ async def confirm_plan(
 async def cancel_plan(
     plan_id: uuid.UUID, p: Principal = Depends(get_principal), db: AsyncSession = Depends(get_db)
 ) -> dict:
-    plan = await db.get(ExecutionPlan, plan_id)
-    if plan is None:
-        raise HTTPException(status_code=404, detail="plan not found")
+    plan = await _owned_plan(db, p, plan_id)
     if plan.status in ("draft", "awaiting_confirm", "confirmed"):
         plan.status = "cancelled"
         await db.commit()

@@ -20,7 +20,7 @@ from app.models.registry import Operation, OperationPermission
 from app.models.sources import (
     DataSource, DiscoveredOperation, ExplorationEvent, ExplorationJob,
 )
-from app.services.llm import LLMError, llm
+from app.services.llm import llm
 
 EXTRACT_SYSTEM = """\
 You explore an enterprise data source and propose callable operations an AI agent
@@ -61,7 +61,7 @@ async def run_exploration(job_id: uuid.UUID) -> None:
             await db.commit()
             await asyncio.sleep(0.4)
 
-        # ---- real extraction via LLM ----
+        # ---- real extraction via LLM (any failure must not leave job 'running') ----
         try:
             data, _ = await llm.structured(
                 settings.pllm_model, EXTRACT_SYSTEM,
@@ -69,9 +69,10 @@ async def run_exploration(job_id: uuid.UUID) -> None:
                 f"Connection: {source.conn}\nName: {source.name}",
                 max_tokens=900,
             )
-        except LLMError as exc:
-            await _emit(db, job_id, "error", {"error": str(exc)})
+        except Exception as exc:  # noqa: BLE001 — surface any error to the job
+            await _emit(db, job_id, "error", {"error": f"{type(exc).__name__}: {exc}"})
             job.status = "error"
+            source.status = "error"
             await db.commit()
             return
 

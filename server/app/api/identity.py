@@ -45,12 +45,8 @@ async def login(body: LoginIn, db: AsyncSession = Depends(get_db)) -> dict:
 
 @router.post("/auth/logout")
 async def logout(p: Principal = Depends(get_principal), db: AsyncSession = Depends(get_db)) -> dict:
-    await db.execute(
-        select(Session).where(Session.user_id == p.user.id)
-    )
-    sessions = (await db.execute(select(Session).where(Session.user_id == p.user.id))).scalars().all()
-    for s in sessions:
-        s.revoked = True
+    # revoke ONLY the current bearer token's session
+    p.session.revoked = True
     await db.commit()
     return {"ok": True}
 

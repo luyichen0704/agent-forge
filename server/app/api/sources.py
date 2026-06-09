@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
 from app.db import SessionLocal, get_db
-from app.deps import Principal, get_principal
+from app.deps import Principal, get_principal, get_principal_qs
 from app.models.sources import DataSource, ExplorationEvent, ExplorationJob
 from app.services.explorer import run_exploration
 
@@ -62,9 +62,19 @@ async def get_job(
 
 
 @router.get("/exploration-jobs/{job_id}/events")
-async def stream_events(job_id: uuid.UUID, request: Request) -> EventSourceResponse:
-    """SSE stream of exploration events; resumable via Last-Event-ID."""
-    last_seq = int(request.headers.get("last-event-id", "0") or "0")
+async def stream_events(
+    job_id: uuid.UUID, request: Request,
+    p: Principal = Depends(get_principal_qs), db: AsyncSession = Depends(get_db),
+) -> EventSourceResponse:
+    """SSE stream of exploration events; authed (query token for EventSource),
+    tenant-scoped, resumable via Last-Event-ID."""
+    job = await db.get(ExplorationJob, job_id)
+    if job is None or job.tenant_id != p.tenant_id:
+        raise HTTPException(status_code=404, detail="job not found")
+    try:
+        last_seq = int(request.headers.get("last-event-id", "0") or "0")
+    except ValueError:
+        last_seq = 0
 
     async def gen():
         nonlocal last_seq

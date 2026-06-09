@@ -25,6 +25,8 @@ async def list_executions(
     t = await db.get(Trace, trace_id)
     if t is None or t.tenant_id != p.tenant_id:
         raise HTTPException(status_code=404, detail="not found")
+    if p.role == "customer" and t.actor_id != p.user.id:
+        raise HTTPException(status_code=404, detail="not found")
     execs = (
         await db.execute(select(Execution).where(Execution.trace_id == trace_id))
     ).scalars().all()

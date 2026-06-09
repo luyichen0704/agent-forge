@@ -17,11 +17,11 @@ router = APIRouter(tags=["traces"])
 
 @router.get("/traces")
 async def list_traces(p: Principal = Depends(get_principal), db: AsyncSession = Depends(get_db)) -> dict:
-    traces = (
-        await db.execute(
-            select(Trace).where(Trace.tenant_id == p.tenant_id).order_by(Trace.created_at.desc()).limit(50)
-        )
-    ).scalars().all()
+    q = select(Trace).where(Trace.tenant_id == p.tenant_id)
+    # customers may only ever see their own traces (not the whole tenant's)
+    if p.role == "customer":
+        q = q.where(Trace.actor_id == p.user.id)
+    traces = (await db.execute(q.order_by(Trace.created_at.desc()).limit(50))).scalars().all()
     return {"items": [{"id": str(t.id), "title": t.title, "status": t.status,
                        "acting_role": t.acting_role, "created_at": t.created_at.isoformat()} for t in traces]}
 
@@ -29,6 +29,9 @@ async def list_traces(p: Principal = Depends(get_principal), db: AsyncSession = 
 async def _owned_trace(db: AsyncSession, p: Principal, trace_id: uuid.UUID) -> Trace:
     t = await db.get(Trace, trace_id)
     if t is None or t.tenant_id != p.tenant_id:
+        raise HTTPException(status_code=404, detail="trace not found")
+    # customers can only read their own traces; employee/admin see tenant-level
+    if p.role == "customer" and t.actor_id != p.user.id:
         raise HTTPException(status_code=404, detail="trace not found")
     return t
 
