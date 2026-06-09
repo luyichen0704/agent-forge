@@ -19,9 +19,11 @@ from app.services.security import hash_password
 
 from app.db import SessionLocal
 from app.models import (
-    ApprovalRequest, AuditEvent, BizRecord, ChatSession, DataSource, DataflowEdge,
-    DataflowNode, Execution, ExecutionPlan, LLMRun, Operation, OperationPermission,
-    Plugin, PluginRegistration, PlanStep, Role, Session, Tenant, Trace, User, UserRole,
+    ApprovalRequest, ApprovalVote, AuditEvent, BizRecord, ChatMessage, ChatSession,
+    DataSource, DataflowEdge, DataflowNode, DiscoveredChain, DiscoveredEntity,
+    DiscoveredOperation, DiscoveredRule, Execution, ExecutionPlan, ExplorationEvent,
+    ExplorationJob, LLMRun, Operation, OperationPermission, Plugin, PluginRegistration,
+    PlanStep, Role, Session, Tenant, Trace, User, UserRole,
 )
 from app.services import audit
 
@@ -90,9 +92,11 @@ async def run() -> None:
         tid = tenant.id
 
         # ---- wipe domain rows for a clean reseed ----
-        for model in (AuditEvent, DataflowEdge, DataflowNode, Execution, PlanStep, ExecutionPlan,
-                      LLMRun, ApprovalRequest, ChatSession, Trace, BizRecord,
-                      PluginRegistration, Plugin, OperationPermission, Operation, DataSource):
+        for model in (AuditEvent, DataflowEdge, DataflowNode, Execution, ChatMessage, PlanStep,
+                      ExecutionPlan, LLMRun, ApprovalVote, ApprovalRequest, ChatSession, Trace,
+                      BizRecord, PluginRegistration, Plugin, OperationPermission, Operation,
+                      ExplorationEvent, DiscoveredOperation, DiscoveredEntity, DiscoveredRule,
+                      DiscoveredChain, ExplorationJob, DataSource):
             await db.execute(delete(model))
         await db.execute(delete(Session))
         await db.execute(delete(UserRole))
