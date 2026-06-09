@@ -52,6 +52,8 @@ npm run dev                   # http://localhost:5173
 
 Log in by role (customer / employee / admin) to see server-enforced RBAC differences. Demo users: `admin@company.com` / `wei@company.com` / `zhang@demo.com` (password `demo1234`).
 
+> **Production deployment** (systemd or docker compose, TLS, real auth, logging, permissions, model-config & secrets storage): see **[DEPLOY.md](DEPLOY.md)**.
+
 ## Screens
 
 | Screen | Backed by |
