@@ -47,8 +47,7 @@
 
 ### 2.3 密钥轮换 / 热加载
 - **轮换 `LLM_API_KEY`/`SECRET_KEY`**：改 `/etc/agent-forge/server.env` → `sudo systemctl reload-or-restart agent-forge-api`（gunicorn 优雅重启，旧 worker 处理完在途请求再退出，见 `gunicorn.conf.py graceful_timeout`）。会话存在 DB，重启不丢登录。
-- **换模型**（`PLLM_MODEL`/`QLLM_MODEL`）：同上改 env + reload。换前用 `GET /api/v1/health/llm` 验证目标模型在网关可用。
-- **建议（roadmap，未实现）**：把"每租户可切换模型/温度/超时"下沉一张 `llm_profiles(tenant_id, role, model, temperature, timeout)` 表，env 只留密钥与默认 profile —— 换模型无需改 env/重启。
+- **换模型（已实现，免重启）**：`llm_profiles` 表保存每租户每角色的 model/temperature/max_tokens/timeout。`PATCH /api/v1/llm-profiles/{pllm|qllm}`（admin）即时生效；`GET /api/v1/llm-models` 拉网关可用模型。env 的 `PLLM_MODEL`/`QLLM_MODEL` 仅作无 profile 行时的回退默认。换前可 `GET /api/v1/health/llm` 验证连通。
 
 ---
 
@@ -101,8 +100,8 @@ sudo chown agentforge:agentforge /var/log/agent-forge && sudo chmod 0750 /var/lo
 sudo -u agentforge bash -lc 'cd /opt/agent-forge/server && set -a && . /etc/agent-forge/server.env && set +a && uv run alembic upgrade head && uv run python -m app.seed'
 
 # 4.8 安装并启动 systemd 服务
-sudo cp deploy/systemd/agent-forge-api.service /etc/systemd/system/
-sudo systemctl daemon-reload && sudo systemctl enable --now agent-forge-api
+sudo cp deploy/systemd/agent-forge-api.service deploy/systemd/agent-forge-worker.service /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now agent-forge-api agent-forge-worker
 curl -s http://127.0.0.1:8099/api/v1/health         # {"status":"ok","env":"prod"}
 
 # 4.9 前端构建并部署为静态文件（可在构建机上 build 后 rsync 过来）
@@ -260,4 +259,4 @@ pg_restore -c -h 127.0.0.1 -U agentforge -d agentforge /backup/agentforge_YYYY-M
 - [ ] 已创建真实管理员密码；demo `/auth/login` 返回 403
 - [ ] 日志落 `/var/log/agent-forge` 且轮转生效；journald 限额已设
 - [ ] `pg_dump` 定时备份已配置
-- [ ] 后台探索任务：当前为进程内 `asyncio.create_task`（重启会丢未完成的探索）；高可用场景建议接 Arq/Celery 持久队列（roadmap）
+- [ ] 后台探索任务：已用 **Arq 持久队列**（Redis）。生产务必同时运行 worker：`agent-forge-worker.service`（systemd）或 compose 的 `worker` 服务；否则探索任务只入队不执行。

@@ -27,7 +27,17 @@ React + TS + Tailwind (Vite)            FastAPI + SQLAlchemy 2 + Postgres + Redi
 
 Backend bounded contexts: `identity / sources / registry / chat-plans / executions-approvals / audit-traces` (see `server/app/`).
 
-## Run it
+## Quick install (visual wizard)
+
+No commands to memorize — run one script and click through a web page:
+
+```bash
+python3 installer/install.py     # opens http://127.0.0.1:8800
+```
+
+The wizard detects your toolchain (uv/docker/npm), lets you fill config and **pull the gateway's live model list** to pick P-LLM/Q-LLM, then one-click runs the whole bring-up (Postgres+Redis → deps → migrations → seed → admin password → API + Arq worker) with a live log and a health check. (Stdlib-only; nothing to `pip install`.)
+
+## Run it (manual)
 
 **1. Backend** (Postgres + Redis via Docker, FastAPI via uv):
 
