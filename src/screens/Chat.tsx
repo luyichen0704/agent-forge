@@ -11,7 +11,7 @@ const capDot = (c: string) => (c === 'query' ? 'data' : c === 'parse' ? 'parsed'
 
 function PlanCard({ plan }: { plan: Plan }) {
   return (
-    <div className="card pad12 col gap8">
+    <div className="card pad12 col gap8" data-tour="plan-card">
       <div className="row between vcenter">
         <span className="eyebrow">执行计划 · {plan.required_confirm_level}</span>
         <Tag k="m">{plan.writes} 写操作</Tag>
@@ -91,7 +91,7 @@ export function ChatMain() {
             <div className={`msg ${m.role === 'user' ? 'u' : 'a'}`} style={{ maxWidth: '100%' }}>{m.content}</div>
             {m.plan && <PlanCard plan={m.plan} />}
             {m.plan && m.plan.status === 'awaiting_confirm' && (
-              <div className="row gap8">
+              <div className="row gap8" data-tour="plan-confirm">
                 <Btn k="go" ic="check" disabled={confirm.isPending}
                   onClick={() => confirm.mutate(m.plan!.id, {
                     onSuccess: (p) => toast(p.blocked ? '仍需更多审批' : '已执行并写入审计链', p.blocked ? 'warn' : 'ok'),
@@ -101,7 +101,7 @@ export function ChatMain() {
               </div>
             )}
             {m.plan && m.plan.status === 'done' && (
-              <div className="row vcenter gap8 sm" style={{ color: 'var(--cap-trusted)' }}>
+              <div className="row vcenter gap8 sm" style={{ color: 'var(--cap-trusted)' }} data-tour="plan-done">
                 <Icon n="check" s={15} c="var(--cap-trusted)" />已执行 · 已写入审计链
                 <button className="btn ghost sm" onClick={() => { setTraceSel(m.plan!.trace_id); qc.invalidateQueries({ queryKey: ['traces'] }); toast('已在审计/数据流中定位该 trace', 'info'); }}>查看审计</button>
               </div>
@@ -116,9 +116,10 @@ export function ChatMain() {
           <Icon n="chat" s={15} c="var(--ink-4)" />
           <input value={draft} onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') doSend(); }}
-            placeholder={send.isPending ? 'P-LLM 规划中…' : '继续输入指令…'} aria-label="对话输入" disabled={send.isPending} />
+            placeholder={send.isPending ? 'P-LLM 规划中…' : '继续输入指令…'} aria-label="对话输入" disabled={send.isPending}
+            data-tour="chat-input" />
           <button className="btn pri sm" onClick={doSend} disabled={!draft.trim() || send.isPending}
-            aria-label="发送" style={{ height: 28 }}>
+            aria-label="发送" style={{ height: 28 }} data-tour="chat-send">
             <Icon n="bolt" s={13} c="#fff" /> 发送
           </button>
         </label>

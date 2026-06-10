@@ -29,7 +29,7 @@ export function FlowMain() {
   if (!data || data.nodes.length === 0) return <div className="fill center muted sm">暂无数据流，先在对话里执行一次操作。</div>;
 
   return (
-    <div className="fill center scroll" style={{ background: 'var(--canvas)', padding: 24 }}>
+    <div className="fill center scroll" style={{ background: 'var(--canvas)', padding: 24 }} data-tour="flow-graph">
       <div className="col center gap2">
         {data.nodes.map((node, i) => (
           <div key={node.node_id} className="col center">

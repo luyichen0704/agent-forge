@@ -2,23 +2,44 @@ import { Icon, Dot, Note, Tag } from '../components/kit';
 import { useApp } from '../lib/appContext';
 import { usePlugins } from '../features/plugins';
 
+// treeSel mapping for plugins screen:
+// 0 = all, 1 = Explorer, 2 = Executor, 3 = PolicyEngine, 4 = AuditSink, 5 = LLMAdapter
+const TREE_IFACE: Record<number, string | null> = {
+  0: null,
+  1: 'Explorer',
+  2: 'Executor',
+  3: 'PolicyEngine',
+  4: 'AuditSink',
+  5: 'LLMAdapter',
+};
+
 export function PluginsMain() {
-  const { plugSel, setPlugSel, toast } = useApp();
+  const { plugSel, setPlugSel, treeSel, setTreeSel, toast } = useApp();
   const { data, isLoading } = usePlugins();
 
   if (isLoading) return <div className="pad16 muted sm">加载插件…</div>;
   const plugins = data?.items ?? [];
 
+  const ifaceFilter = TREE_IFACE[treeSel] ?? null;
+  const visible = ifaceFilter ? plugins.filter((p) => p.iface === ifaceFilter) : plugins;
+
+  // Keep plugSel and treeSel in sync
+  function handleSelect(id: string, iface: string) {
+    setPlugSel(id);
+    const treeIdx = Object.entries(TREE_IFACE).find(([, v]) => v === iface)?.[0];
+    if (treeIdx) setTreeSel(Number(treeIdx));
+  }
+
   return (
     <div className="pad16 col gap12 fill scroll">
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12 }}>
-        {plugins.map((p) => {
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12 }} data-tour="plugins-grid">
+        {visible.map((p) => {
           const selected = p.id === plugSel;
           return (
             <div key={p.id} className="card pad12 col gap8"
               style={{ cursor: 'pointer', borderColor: selected ? 'var(--accent)' : 'var(--line)',
                        boxShadow: selected ? '0 0 0 1px var(--accent)' : 'none' }}
-              onClick={() => setPlugSel(p.id)}>
+              onClick={() => handleSelect(p.id, p.iface)}>
               <div className="row vcenter gap8">
                 <span style={{ width: 28, height: 28, borderRadius: 7, background: 'var(--fill)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                   <Icon n={p.icon} s={15} c="var(--ink-2)" />

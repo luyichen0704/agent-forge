@@ -2,6 +2,7 @@ import { Icon, Btn, Tag, Dot, Note } from '../components/kit';
 import { useApp } from '../lib/appContext';
 import { useMe } from '../features/auth';
 import { useSources, useStartExplore } from '../features/sources';
+import { useQueryClient } from '@tanstack/react-query';
 
 const iconBox: React.CSSProperties = {
   width: 34, height: 34, borderRadius: 8, background: 'var(--fill)',
@@ -41,7 +42,7 @@ export function ExploreMain() {
               <Dot k={s.status === 'connected' ? 'ok' : s.status === 'running' ? 'wait' : 'off'} />
               {s.status}
             </div>
-            <Icon n="dots" s={16} c="var(--ink-4)" />
+            <Icon n="chevron" s={16} c="var(--ink-4)" />
           </div>
         );
       })}
@@ -64,6 +65,7 @@ export function ExploreAside() {
   const role = useMe().data?.acting_role ?? 'admin';
   const { data } = useSources();
   const explore = useStartExplore();
+  const qc = useQueryClient();
   const sources = data?.items ?? [];
   const idx = treeSel >= 1 && treeSel <= sources.length ? treeSel - 1 : 0;
   const src = sources[idx];
@@ -83,8 +85,12 @@ export function ExploreAside() {
         </div>
         {role === 'admin' && (
           <Btn k="pri" ic="play" disabled={explore.isPending}
+            data-tour="explore-start"
             onClick={() => explore.mutate(src.id, {
-              onSuccess: () => toast('已启动探索 · 前往「实时探索」查看', 'info'),
+              onSuccess: (r) => {
+                qc.setQueryData(['job-latest'], r.job_id);
+                toast('已启动探索 · 前往「实时探索」查看', 'info');
+              },
               onError: (e) => toast((e as Error).message, 'warn'),
             })}>开始探索</Btn>
         )}
