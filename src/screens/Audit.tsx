@@ -22,7 +22,7 @@ export function AuditMain() {
 
   const v = data.verification;
   return (
-    <div className="pad16 fill scroll">
+    <div className="pad16 fill scroll" data-tour="audit-chain">
       <div className="row vcenter gap8" style={{ marginBottom: 12 }}>
         <Tag k={v.valid ? 'trusted' : 'write'}>{v.valid ? 'hash 链完整性已验证' : '链已被篡改'}</Tag>
         <span className="xs muted tnum">{v.count} 事件 · head {v.head?.slice(0, 10)}…</span>
@@ -78,6 +78,7 @@ export function AuditAside() {
             <div className="row between sm"><span className="muted">状态</span><span className="mono muted2">{ex.status}</span></div>
             {canRollback && ex.status !== 'rolled_back' && (
               <Btn sz="sm" k="warn" ic="refresh" style={{ marginTop: 4 }} disabled={rollback.isPending}
+                data-tour="audit-rollback"
                 onClick={() => rollback.mutate(ex.id, {
                   onSuccess: () => toast('已回滚 · 已记录补偿事件', 'warn'),
                   onError: (e) => toast((e as Error).message, 'warn'),

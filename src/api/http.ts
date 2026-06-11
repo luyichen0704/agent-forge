@@ -6,9 +6,19 @@ const TOKEN_KEY = 'agentforge.token';
 export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
 }
+
+/* Token change subscription so React can re-render on login/logout
+   (localStorage alone fires no event in the same tab). */
+const tokenListeners = new Set<() => void>();
+export function subscribeToken(listener: () => void): () => void {
+  tokenListeners.add(listener);
+  return () => tokenListeners.delete(listener);
+}
+
 export function setToken(token: string | null): void {
   if (token) localStorage.setItem(TOKEN_KEY, token);
   else localStorage.removeItem(TOKEN_KEY);
+  tokenListeners.forEach((fn) => fn());
 }
 
 export class ApiError extends Error {

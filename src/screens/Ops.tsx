@@ -78,6 +78,7 @@ function ApprovalRow({ ar }: { ar: ApprovalRequest }) {
         <span className="xs muted">{ar.approve_votes}/{ar.required_votes} 批准 · {ar.status}</span>
       </div>
       <Btn sz="sm" k="go" ic="check" disabled={vote.isPending || ar.status !== 'pending'}
+        data-tour="ops-approve"
         onClick={() => vote.mutate({ decision: 'approve' }, {
           onSuccess: (r) => toast(r.status === 'approved' ? '已批准并满足条件' : `已投票 (${r.approve_votes}/${r.required_votes})`),
           onError: (e) => toast((e as Error).message, 'warn'),
@@ -92,7 +93,7 @@ function ApprovalsPanel() {
   const { data } = useApprovals('pending');
   const items = data?.items ?? [];
   return (
-    <div className="col gap8" style={{ marginTop: 16 }}>
+    <div className="col gap8" style={{ marginTop: 16 }} data-tour="ops-approvals">
       <span className="eyebrow">待人工审批 · dual approval（{items.length}）</span>
       {items.length === 0 && <span className="sm muted">暂无待审批请求。</span>}
       {items.map((ar) => <ApprovalRow key={ar.id} ar={ar} />)}
@@ -132,7 +133,7 @@ export function OpsMain() {
           <Icon n="eye" s={14} c="var(--ink-3)" />{role} 视角 · 只显示你可调用的操作 · 审核为只读
         </div>
       )}
-      <div className="card" style={{ overflow: 'hidden' }}>
+      <div className="card" style={{ overflow: 'hidden' }} data-tour="ops-table">
         <table className="tbl">
           <thead><tr style={{ cursor: 'default' }}>
             <th>操作</th><th>类型</th><th>权限</th><th>确认级别</th><th>状态</th><th></th>
@@ -154,7 +155,7 @@ export function OpsMain() {
                   <Dot k={o.status === 'active' ? 'ok' : o.status === 'disabled' ? 'off' : 'wait'} />
                   <span style={{ color: stColor(o.status) }}>{o.status}</span>
                 </span></td>
-                <td><Icon n="dots" s={15} c="var(--ink-4)" /></td>
+                <td><Icon n="chevron" s={15} c="var(--ink-4)" /></td>
               </tr>
             ))}
           </tbody>

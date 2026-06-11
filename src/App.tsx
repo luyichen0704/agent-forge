@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { getToken } from './api/http';
+import { useState, useSyncExternalStore } from 'react';
+import { getToken, subscribeToken } from './api/http';
 import { useMe, login, passwordLogin } from './features/auth';
 import { Shell } from './components/Shell';
 import { Icon } from './components/kit';
@@ -73,7 +73,7 @@ function Login() {
 }
 
 export default function App() {
-  const hasToken = !!getToken();
+  const hasToken = !!useSyncExternalStore(subscribeToken, getToken);
   const me = useMe();
 
   if (!hasToken) return <Login />;
