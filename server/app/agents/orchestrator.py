@@ -150,13 +150,16 @@ async def create_plan(
         if s["kind"] == "write":
             plan_required = stricter_confirm(plan_required, decision.required_confirm)
             # `confirm` = the plan owner's own confirmation is the gate (no separate vote).
-            # `dual` = TWO distinct admins must vote → create a real approval request.
+            # `dual` = TWO distinct admins in total. The requester cannot vote on their
+            # own request, so an admin requester counts as the first of the two pairs
+            # of eyes and one independent admin vote remains (four-eyes principle).
             if decision.required_confirm == "dual":
                 ar = ApprovalRequest(
                     tenant_id=tenant_id, trace_id=trace.id, target_type="plan_step",
                     target_id=s["op_key"] or "", confirm_level="dual",
                     status="pending", requested_by=uuid.UUID(identity.user_id),
-                    required_votes=2, expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
+                    required_votes=1 if identity.role == "admin" else 2,
+                    expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
                 )
                 db.add(ar)
                 await db.flush()
@@ -179,10 +182,13 @@ async def create_plan(
         plan.status = "confirmed"  # no human needed
     else:
         plan.status = "awaiting_confirm"
+        # the requester cannot vote on their own request — exclude them
+        independent = eligible_admins - (1 if identity.role == "admin" else 0)
+        needed = (1 if identity.role == "admin" else 2)
         await audit.append_event(db, trace.id, "CONFIRMATION_REQUESTED",
                                  {"level": plan_required, "writes": draft["writes"],
                                   "eligible_admins": eligible_admins,
-                                  "satisfiable": plan_required != "dual" or eligible_admins >= 2},
+                                  "satisfiable": plan_required != "dual" or independent >= needed},
                                  cap="parsed")
     await db.flush()
     return plan

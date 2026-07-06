@@ -46,11 +46,12 @@ Rules:
 - ONLY use endpoints from the catalogue verbatim (copy method + path exactly).
 - Prefer business-level reads (lists, search, detail) and a few key writes.
 - Skip auth/login/health/metrics/static endpoints.
-Return JSON:
+Return COMPACT JSON (at most 4 entities with ≤6 fields each, ≤4 rules, ≤3 chains):
 {"entities":[{"name":..,"fields":[..]}],
  "operations":[{"key":"area.verb","desc":"..","method":"GET","path":"/api/.."}],
  "rules":["business rules you can infer"], "chains":["likely multi-step chains"]}
-Operation keys are short snake area.verb identifiers, e.g. "repo.search"."""
+Operation keys are short snake area.verb identifiers, e.g. "repo.search".
+desc must be ≤15 words."""
 
 
 async def _emit(db, job_id: uuid.UUID, event_type: str, payload: dict) -> None:
@@ -121,20 +122,22 @@ async def run_exploration(job_id: uuid.UUID) -> None:
         try:
             prof = await resolve_profile(db, source.tenant_id, "pllm")
             if endpoints:
-                data, _ = await llm.structured(
-                    prof.model, EXTRACT_SYSTEM_API,
-                    f"System: {source.name} ({source.conn})\n"
-                    f"Endpoint catalogue ({len(endpoints)} real endpoints):\n"
-                    + targets.endpoint_digest(endpoints),
-                    temperature=prof.temperature, max_tokens=1600,
-                )
+                args = (prof.model, EXTRACT_SYSTEM_API,
+                        f"System: {source.name} ({source.conn})\n"
+                        f"Endpoint catalogue ({len(endpoints)} real endpoints):\n"
+                        + targets.endpoint_digest(endpoints))
+                kw = {"temperature": prof.temperature, "max_tokens": 2800}
             else:
-                data, _ = await llm.structured(
-                    prof.model, EXTRACT_SYSTEM,
-                    f"Source type: {source.type}\nConnector: {source.connector_kind}\n"
-                    f"Connection: {source.conn}\nName: {source.name}",
-                    temperature=prof.temperature, max_tokens=900,
-                )
+                args = (prof.model, EXTRACT_SYSTEM,
+                        f"Source type: {source.type}\nConnector: {source.connector_kind}\n"
+                        f"Connection: {source.conn}\nName: {source.name}")
+                kw = {"temperature": prof.temperature, "max_tokens": 900}
+            try:
+                data, _ = await llm.structured(*args, **kw)
+            except Exception:  # noqa: BLE001 — one retry for transient gateway/JSON issues
+                await _emit(db, job_id, "retry", {"stage": "extract"})
+                await db.commit()
+                data, _ = await llm.structured(*args, **kw)
         except Exception as exc:  # noqa: BLE001 — surface any error to the job
             await _emit(db, job_id, "error", {"error": f"{type(exc).__name__}: {exc}"})
             job.status = "error"
