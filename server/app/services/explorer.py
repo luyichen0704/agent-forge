@@ -172,10 +172,11 @@ async def run_exploration(job_id: uuid.UUID) -> None:
         job.phase = 3
         job.progress = 70
         by_binding = {(e["method"], e["path"]): e for e in endpoints}
+        slug = _source_slug(source)
         registered = 0
         for op in data.get("operations", [])[:10]:
-            key = str(op.get("key", "")).strip()
-            if not key:
+            raw_key = str(op.get("key", "")).strip()
+            if not raw_key:
                 continue
             binding = None
             input_schema: dict = {}
@@ -184,7 +185,7 @@ async def run_exploration(job_id: uuid.UUID) -> None:
                 if ep is None:
                     # LLM proposed an endpoint not in the real catalogue — drop it
                     await _emit(db, job_id, "op_rejected", {
-                        "key": key, "reason": "not in real endpoint catalogue",
+                        "key": raw_key, "reason": "not in real endpoint catalogue",
                         "method": op.get("method"), "path": op.get("path"),
                     })
                     continue
@@ -201,12 +202,15 @@ async def run_exploration(job_id: uuid.UUID) -> None:
                 kind = op.get("kind") if op.get("kind") in ("query", "mutation") else "query"
                 executor = "FunctionExecutor"
                 input_schema = {"desc": str(op.get("desc", ""))[:200]}
+            # per-source op-key isolation: qualify with a source slug if this key
+            # is already taken by a DIFFERENT source (avoids cross-source overwrite)
+            key = await _resolve_op_key(db, source, raw_key, slug)
             db.add(DiscoveredOperation(job_id=job_id, key=key, kind=kind,
                                        input_schema=input_schema, output_schema={},
                                        capability_requirements={}, executor_hint=executor))
             await _emit(db, job_id, "op", {"key": key, "kind": kind, "desc": op.get("desc", ""),
                                            "binding": {k: binding[k] for k in ("method", "path")} if binding else None})
-            await _register_operation(db, source.tenant_id, key, kind, job_id,
+            await _register_operation(db, source, key, kind, job_id,
                                       executor=executor, binding=binding, input_schema=input_schema)
             registered += 1
             await db.commit()
@@ -227,13 +231,54 @@ async def run_exploration(job_id: uuid.UUID) -> None:
         await db.commit()
 
 
-async def _register_operation(db, tenant_id, key, kind, job_id, *,
+import re as _re
+
+
+def _source_slug(source) -> str:
+    """Short stable slug identifying a source, for op-key qualification.
+    Prefers the first ascii-alnum token of the name, else the base_url host,
+    else a hex prefix of the source id."""
+    m = _re.search(r"[A-Za-z][A-Za-z0-9]{1,}", source.name or "")
+    if m:
+        return m.group(0).lower()
+    base = (source.config_json or {}).get("base_url", "")
+    host = _re.sub(r"^https?://", "", base).split(":")[0].split("/")[0]
+    host = _re.sub(r"[^a-z0-9]", "", host.lower())
+    return host or f"s{source.id.hex[:6]}"
+
+
+async def _resolve_op_key(db, source, key: str, slug: str) -> str:
+    """Return an op_key unique across sources within the tenant: the raw key if
+    free or already owned by THIS source, else the key qualified by the source
+    slug (and, if that still collides, by a source-id fragment)."""
+    existing = (
+        await db.execute(
+            select(Operation).where(Operation.tenant_id == source.tenant_id, Operation.op_key == key)
+        )
+    ).scalar_one_or_none()
+    if existing is None or existing.source_id == source.id:
+        return key
+    qualified = f"{slug}.{key}"
+    clash = (
+        await db.execute(
+            select(Operation).where(Operation.tenant_id == source.tenant_id,
+                                    Operation.op_key == qualified)
+        )
+    ).scalar_one_or_none()
+    if clash is None or clash.source_id == source.id:
+        return qualified
+    return f"{slug}{source.id.hex[:4]}.{key}"
+
+
+async def _register_operation(db, source, key, kind, job_id, *,
                               executor: str = "FunctionExecutor",
                               binding: dict | None = None,
                               input_schema: dict | None = None) -> None:
+    tenant_id = source.tenant_id
     existing = (
         await db.execute(
-            select(Operation).where(Operation.tenant_id == tenant_id, Operation.op_key == key)
+            select(Operation).where(Operation.tenant_id == tenant_id,
+                                    Operation.source_id == source.id, Operation.op_key == key)
         )
     ).scalar_one_or_none()
     if existing:
@@ -241,10 +286,13 @@ async def _register_operation(db, tenant_id, key, kind, job_id, *,
         if binding and existing.binding_json != binding:
             existing.binding_json = binding
             existing.executor_binding = executor
+        if input_schema:
+            existing.input_schema_json = input_schema
         return
     confirm = "confirm" if kind == "mutation" else "auto"
     status = "pending" if kind == "mutation" else "active"
-    op = Operation(tenant_id=tenant_id, op_key=key, version=1, kind=kind, confirm_level=confirm,
+    op = Operation(tenant_id=tenant_id, source_id=source.id, op_key=key, version=1, kind=kind,
+                   confirm_level=confirm,
                    risk_level="high" if kind == "mutation" else "low", status=status,
                    input_schema_json=input_schema or {},
                    executor_binding=executor, rollback_binding=executor,

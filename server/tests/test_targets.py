@@ -191,7 +191,7 @@ async def test_validate_endpoints_keeps_real_drops_hallucinated(monkeypatch):
         async def __aexit__(self, *a): return False
         request = fake_request
 
-    monkeypatch.setattr(targets, "client_for", lambda cfg: FakeClient())
+    monkeypatch.setattr(targets, "client_for", lambda cfg, **kw: FakeClient())
     proposed = [
         {"method": "GET", "path": "/api/v1/users", "summary": "real"},
         {"method": "GET", "path": "/api/v1/ghost", "summary": "hallucinated"},
@@ -221,7 +221,35 @@ async def test_discover_spec_common_path(monkeypatch):
         async def __aexit__(self, *a): return False
         get = fake_get
 
-    monkeypatch.setattr(targets, "client_for", lambda cfg: FakeClient())
+    monkeypatch.setattr(targets, "client_for", lambda cfg, **kw: FakeClient())
     url, spec = await targets.discover_spec({"base_url": "http://x"})
     assert url == "/openapi.json"
     assert spec["openapi"] == "3.0.0"
+
+
+# ---------- type coercion + cross-step ref resolution ----------
+
+def test_coerce_types():
+    from app.executors.base import _coerce
+    assert _coerce("3", "integer") == 3
+    assert _coerce("3", "array") == [3]
+    assert _coerce("a,b", "array") == ["a", "b"]
+    assert _coerce("[1,2]", "array") == [1, 2]
+    assert _coerce("true", "boolean") is True
+    assert _coerce("keep", "string") == "keep"
+    assert _coerce(5, "integer") == 5           # non-str passthrough
+    assert _coerce("x", "integer") == "x"        # unparseable → unchanged
+
+
+def test_resolve_cross_step_refs():
+    from app.agents.orchestrator import _resolve_refs
+    step_rows = {1: [{"base_id": "abc", "id": 7}], 2: [{"id": 42}]}
+    out = _resolve_refs({"a": "$step1.base_id", "b": "$2", "c": "$prev.id",
+                         "d": "literal", "e": ["$step1.id", "x"]}, step_rows)
+    assert out["a"] == "abc"
+    assert out["b"] == "42"           # $2 → step 2 first row id
+    assert out["c"] == 42             # $prev.id → latest step's field
+    assert out["d"] == "literal"
+    assert out["e"] == [7, "x"]
+    # unresolved ref (no such step) left as-is so it surfaces at the executor
+    assert _resolve_refs({"x": "$step9.foo"}, step_rows)["x"] == "$step9.foo"

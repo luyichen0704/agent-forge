@@ -10,6 +10,7 @@ Flow:
 """
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -284,6 +285,36 @@ def _row_id(row: dict) -> str | None:
     return None
 
 
+_REF_RE = re.compile(r"^\$(?:step)?(\d+|prev)(?:\.([A-Za-z0-9_]+))?$")
+
+
+def _resolve_refs(kwargs: dict, step_rows: dict[int, list[dict]]) -> dict:
+    """Resolve planner-emitted cross-step references in arg values, e.g.
+    "$step1.base_id" → the base_id field of step 1's first output row, "$step2"
+    → step 2's first row id. Target-agnostic; unresolved refs are left as-is so
+    the failure surfaces at the executor rather than being silently dropped."""
+    def resolve_one(v):
+        if isinstance(v, str):
+            m = _REF_RE.match(v.strip())
+            if not m:
+                return v
+            which, field = m.group(1), m.group(2)
+            if which == "prev":
+                rows = step_rows[max(step_rows)] if step_rows else []
+            else:
+                rows = step_rows.get(int(which), [])
+            if not rows:
+                return v
+            row = rows[0]
+            if field:
+                return row.get(field, v)
+            return _row_id(row) or v
+        if isinstance(v, list):
+            return [resolve_one(x) for x in v]
+        return v
+    return {k: resolve_one(v) for k, v in kwargs.items()}
+
+
 def _id_params(op: Operation | None) -> list[str]:
     """Parameter names of an operation that look like a record identifier
     (declared `id` or `*_id`), path params first — target-agnostic."""
@@ -302,15 +333,23 @@ async def _execute_plan(db: AsyncSession, plan: ExecutionPlan, trace: Trace, ste
     """
     rows: list[dict] = []        # accumulated query data (capability: data)
     selected: list[str] = []     # Q-LLM parsed selection (capability: parsed)
+    step_rows: dict[int, list[dict]] = {}   # per-step query output, for $stepN refs
 
     for st in steps:
         if st.kind == "query" and st.op_key:
             ex = await _op_executor(db, trace.tenant_id, st.op_key)
-            fetched = await ex.read(db, trace.tenant_id, st.op_key, dict(st.input_refs_json or {}))
-            rows.extend(fetched)
-            st.status = "done"
+            fetched = await ex.read(db, trace.tenant_id, st.op_key,
+                                    _resolve_refs(dict(st.input_refs_json or {}), step_rows))
+            # distinguish real rows from an executor error envelope ([{'error':..}])
+            err = fetched[0].get("error") if (len(fetched) == 1 and isinstance(fetched[0], dict)
+                                              and set(fetched[0]) == {"error"}) else None
+            real = [] if err else fetched
+            rows.extend(real)
+            step_rows[st.step_no] = real
+            st.status = "error" if err else "done"
             await audit.append_event(db, plan.trace_id, "DATA_READ",
-                                     {"op": st.op_key, "rows": len(fetched)}, cap="data")
+                                     {"op": st.op_key, "rows": len(real),
+                                      "error": err}, cap="data")
 
         elif st.kind == "parse":
             # Q-LLM is actually invoked here, on quarantined data only
@@ -331,10 +370,10 @@ async def _execute_plan(db: AsyncSession, plan: ExecutionPlan, trace: Trace, ste
             if existing is not None:
                 st.status = "done" if existing.status == "ok" else "error"
                 continue
-            # Resolve a chained record id from a prior step (Q-LLM selection, else
-            # first fetched row) and inject it into the write op's declared id-like
-            # params that the planner left unset — fully target-agnostic.
-            kwargs = dict(st.input_refs_json or {})
+            # Resolve args: (1) planner-emitted $stepN.field references from prior
+            # query outputs, (2) a chained record id into declared id-like params
+            # the planner left unset — all fully target-agnostic.
+            kwargs = _resolve_refs(dict(st.input_refs_json or {}), step_rows)
             op = await _load_op(db, trace.tenant_id, st.op_key)
             chained = (selected[0] if selected else None) or (_row_id(rows[0]) if rows else None)
             if chained is not None:

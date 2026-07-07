@@ -32,6 +32,30 @@ def _truncate(payload: Any, limit: int = 4000) -> Any:
 _ENVELOPE_KEYS = ("items", "data", "results", "records", "list", "rows", "value")
 
 
+def _coerce(value: Any, declared_type: str | None) -> Any:
+    """Best-effort coerce a value to the parameter's declared JSON type so a
+    string like "3" reaches an []int/int field as the right type. Target-agnostic."""
+    if declared_type in (None, "string") or not isinstance(value, str):
+        return value
+    try:
+        if declared_type == "integer":
+            return int(value)
+        if declared_type == "number":
+            return float(value)
+        if declared_type == "boolean":
+            return value.strip().lower() in ("true", "1", "yes")
+        if declared_type == "array":
+            inner = value.strip()
+            if inner.startswith("["):
+                import json as _json
+                return _json.loads(inner)
+            parts = [p.strip() for p in inner.split(",") if p.strip()]
+            return [int(p) if p.lstrip("-").isdigit() else p for p in parts]
+    except (ValueError, TypeError):
+        return value
+    return value
+
+
 def _rows(payload: Any, _depth: int = 0) -> list[dict]:
     """Normalize an arbitrary JSON API response into list[dict] rows.
 
@@ -195,7 +219,9 @@ class APIExecutor(Executor):
         if missing:
             return None, ExecutorResult(error_code=f"missing_param:{missing}")
         method = binding.get("method", "GET").upper()
-        rest = {k: v for k, v in kwargs.items()
+        params_spec = binding.get("params") or {}
+        rest = {k: _coerce(v, params_spec.get(k, {}).get("type"))
+                for k, v in kwargs.items()
                 if k not in used and v is not None and k != "user_id"}
         try:
             async with targets.client_for(config) as client:
@@ -212,11 +238,15 @@ class APIExecutor(Executor):
             payload: Any = resp.json()
         except ValueError:
             payload = resp.text[:2000]
+        # a data API returning 3xx (redirect to login/HTML) or >=400 is a failure,
+        # never a success — do not let a followed redirect mask it (client does not
+        # follow redirects; 3xx is surfaced explicitly)
+        error_code = None if resp.status_code < 300 else f"http_{resp.status_code}"
         result = ExecutorResult(
             before_state={},
             after_state={"http_status": resp.status_code, "method": method, "path": path,
                          "response": _truncate(payload)},
-            error_code=None if resp.status_code < 400 else f"http_{resp.status_code}",
+            error_code=error_code,
         )
         return payload, result
 

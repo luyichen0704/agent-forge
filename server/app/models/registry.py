@@ -15,6 +15,10 @@ class Operation(Base, TimestampMixin):
 
     id: Mapped[uuid.UUID] = uuid_pk()
     tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id"), nullable=False, index=True)
+    # which external system this operation belongs to (null = built-in demo op)
+    source_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("data_sources.id"), nullable=True, index=True
+    )
     op_key: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     kind: Mapped[str] = mapped_column(String(20), nullable=False)            # query|mutation

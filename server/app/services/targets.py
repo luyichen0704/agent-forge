@@ -68,12 +68,17 @@ def build_auth_headers(config: dict) -> dict[str, str]:
     return headers
 
 
-def client_for(config: dict) -> httpx.AsyncClient:
+def client_for(config: dict, *, follow_redirects: bool = False) -> httpx.AsyncClient:
+    # Always ask for JSON — some systems (e.g. Firefly III) return a 302 to an
+    # HTML page on a validation error unless the request declares JSON, which
+    # would mask a real failure as an HTML 200. Redirects are NOT followed for
+    # executor calls: a data API returning 3xx signals a problem, not success.
+    headers = {"Accept": "application/json", **build_auth_headers(config)}
     return httpx.AsyncClient(
         base_url=(config or {}).get("base_url", ""),
-        headers=build_auth_headers(config),
+        headers=headers,
         timeout=TIMEOUT,
-        follow_redirects=True,
+        follow_redirects=follow_redirects,
     )
 
 
@@ -81,7 +86,7 @@ async def probe_base(config: dict) -> dict[str, Any]:
     """Reachability probe against the real target. Returns real status + latency."""
     t0 = time.monotonic()
     try:
-        async with client_for(config) as client:
+        async with client_for(config, follow_redirects=True) as client:
             resp = await client.get("/")
             return {
                 "ok": True,
@@ -105,7 +110,7 @@ async def discover_spec(config: dict) -> tuple[str | None, dict | None]:
     if explicit:
         candidates.append(explicit)
     candidates += [p for p in COMMON_SPEC_PATHS if p != explicit]
-    async with client_for(config) as client:
+    async with client_for(config, follow_redirects=True) as client:
         for path in candidates:
             try:
                 resp = await client.get(path)
@@ -149,7 +154,8 @@ async def validate_endpoints(config: dict, endpoints: list[dict],
                 continue
             ctype = resp.headers.get("content-type", "")
             is_spa = "text/html" in ctype  # HTML = SPA catch-all, route not really an API
-            if resp.status_code in (404, 501) or is_spa:
+            is_redirect = 300 <= resp.status_code < 400  # usually an auth/login redirect
+            if resp.status_code in (404, 501) or is_spa or is_redirect:
                 continue
             out.append({**e, "verified": True, "probe_status": resp.status_code})
             live_read_paths.add(e["path"])
