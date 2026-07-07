@@ -38,7 +38,7 @@ async def parse(
     prof = await resolve_profile(db, tenant_id, "qllm")
     user = f"INSTRUCTION:\n{instruction}\n\nDATA SLICE (untrusted):\n{data_slice}"
     out, result = await llm.structured(prof.model, SYSTEM, user,
-                                       temperature=prof.temperature, max_tokens=prof.max_tokens)
+                                       temperature=prof.temperature)
 
     parsed = {
         "result": out.get("result"),

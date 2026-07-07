@@ -226,7 +226,7 @@ def _spec_base_path(spec: dict) -> str:
     return base if base and base != "/" else ""
 
 
-def summarize_endpoints(spec: dict, limit: int = 150) -> list[dict]:
+def summarize_endpoints(spec: dict, limit: int = 400) -> list[dict]:
     """Flatten an OpenAPI 2/3 spec (or WordPress /wp-json route map) into
     [{method, path, summary, tag, params, body_fields}]."""
     out: list[dict] = []
@@ -300,7 +300,7 @@ def normalize_manual(entries: list[dict]) -> list[dict]:
     return out
 
 
-def endpoint_digest(endpoints: list[dict], max_chars: int = 6000) -> str:
+def endpoint_digest(endpoints: list[dict], max_chars: int = 24000) -> str:
     """Compact text catalogue of real endpoints for the P-LLM."""
     lines = []
     for e in endpoints:

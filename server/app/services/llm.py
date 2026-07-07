@@ -69,11 +69,18 @@ class LLMClient:
         messages: list[dict[str, str]],
         *,
         temperature: float = 0.2,
-        max_tokens: int = 1500,
-        timeout: float = 90.0,
+        max_tokens: int | None = None,
+        timeout: float = 120.0,
     ) -> LLMResult:
         if not self.api_key:
             raise LLMError("LLM_API_KEY is not configured")
+        # never cap output by default — a max_tokens limit truncates the model
+        # (especially reasoning models that spend tokens before answering).
+        payload: dict[str, Any] = {
+            "model": model, "messages": messages, "temperature": temperature,
+        }
+        if max_tokens is not None:
+            payload["max_tokens"] = max_tokens
         started = time.monotonic()
         # retry transient gateway failures (503 busy / 429 / 5xx / network) with
         # exponential backoff + jitter — the gateway 503s under concurrent load
@@ -88,12 +95,7 @@ class LLMClient:
                             "Authorization": f"Bearer {self.api_key}",
                             "Content-Type": "application/json",
                         },
-                        json={
-                            "model": model,
-                            "messages": messages,
-                            "temperature": temperature,
-                            "max_tokens": max_tokens,
-                        },
+                        json=payload,
                         timeout=timeout,
                     )
             except httpx.HTTPError as exc:
@@ -132,7 +134,7 @@ class LLMClient:
         user: str,
         *,
         temperature: float = 0.1,
-        max_tokens: int = 1800,
+        max_tokens: int | None = None,
     ) -> tuple[dict[str, Any], LLMResult]:
         """Ask for strict JSON and parse it (tolerant of ```json fences)."""
         result = await self.chat(
@@ -253,4 +255,12 @@ def _escape_control_chars(text: str) -> str:
 
 
 # module-level singletons
-llm = LLMClient()
+llm = LLMClient()                                    # planning (P-LLM) + Q-LLM via camel-hub
+# dedicated Explorer LLM (auto-adaptation) — separate provider/key/model
+explorer_llm = LLMClient(settings.explorer_base_url, settings.explorer_api_key)
+
+
+def explorer_model(default: str) -> str:
+    """The model to use for exploration calls: the configured explorer model,
+    else the caller's default (e.g. the tenant P-LLM profile)."""
+    return settings.explorer_model or default

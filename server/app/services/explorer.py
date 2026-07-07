@@ -31,7 +31,7 @@ from app.services import targets
 from app.services.exploration_prompts import (
     DESCRIBE_METADATA, PROMPT_VERSION, PROPOSE_ENDPOINTS, SELECT_FROM_SPEC,
 )
-from app.services.llm import llm
+from app.services.llm import explorer_llm, explorer_model
 from app.services.llm_config import resolve as resolve_profile
 
 
@@ -66,7 +66,7 @@ async def _discover_endpoints(db, job_id, source, cfg, prof) -> tuple[list[dict]
         mode = "openapi"
     else:
         # no machine-readable spec → LLM proposes, then we verify against reality
-        p_args = (prof.model, PROPOSE_ENDPOINTS,
+        p_args = (explorer_model(prof.model), PROPOSE_ENDPOINTS,
                   f"System name: {source.name}\nKind: {source.type}\n"
                   f"Connector: {source.connector_kind}\nConnection: {source.conn}\n"
                   f"Base URL: {cfg.get('base_url')}")
@@ -74,7 +74,9 @@ async def _discover_endpoints(db, job_id, source, cfg, prof) -> tuple[list[dict]
         prop_err = None
         for _try in range(2):
             try:
-                proposal, _ = await llm.structured(*p_args, temperature=prof.temperature, max_tokens=3600)
+                # generous budget: the explorer model may be a reasoning model
+                # that spends tokens before emitting the JSON answer
+                proposal, _ = await explorer_llm.structured(*p_args, temperature=prof.temperature)
                 proposed = targets.normalize_manual(proposal.get("endpoints") or [])
                 prop_err = None
                 break
@@ -151,23 +153,24 @@ async def run_exploration(job_id: uuid.UUID) -> None:
 
         # ---- phase 3: 操作生成 — LLM curates business ops (any failure must not leave job 'running') ----
         try:
+            emodel = explorer_model(prof.model)
             if endpoints:
-                args = (prof.model, SELECT_FROM_SPEC,
+                args = (emodel, SELECT_FROM_SPEC,
                         f"System: {source.name} ({source.conn})\n"
                         f"Verified endpoint catalogue ({len(endpoints)} real endpoints):\n"
                         + targets.endpoint_digest(endpoints))
-                kw = {"temperature": prof.temperature, "max_tokens": 2800}
+                kw = {"temperature": prof.temperature}
             else:
-                args = (prof.model, DESCRIBE_METADATA,
+                args = (emodel, DESCRIBE_METADATA,
                         f"Source type: {source.type}\nConnector: {source.connector_kind}\n"
                         f"Connection: {source.conn}\nName: {source.name}")
-                kw = {"temperature": prof.temperature, "max_tokens": 900}
+                kw = {"temperature": prof.temperature}
             try:
-                data, _ = await llm.structured(*args, **kw)
+                data, _ = await explorer_llm.structured(*args, **kw)
             except Exception:  # noqa: BLE001 — one retry for transient gateway/JSON issues
                 await _emit(db, job_id, "retry", {"stage": "extract"})
                 await db.commit()
-                data, _ = await llm.structured(*args, **kw)
+                data, _ = await explorer_llm.structured(*args, **kw)
         except Exception as exc:  # noqa: BLE001 — surface any error to the job
             await _emit(db, job_id, "error", {"error": f"{type(exc).__name__}: {exc}"})
             job.status = "error"

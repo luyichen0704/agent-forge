@@ -74,7 +74,7 @@ async def plan(
 
     prof = await resolve_profile(db, tenant_id, "pllm")
     draft, result = await llm.structured(prof.model, SYSTEM, user,
-                                         temperature=prof.temperature, max_tokens=prof.max_tokens)
+                                         temperature=prof.temperature)
     draft = _normalise(draft)
 
     run = LLMRun(
