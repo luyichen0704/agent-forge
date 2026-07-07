@@ -44,12 +44,22 @@ async def list_sessions(p: Principal = Depends(get_principal), db: AsyncSession 
     return {"items": [{"id": str(s.id), "title": s.title} for s in rows]}
 
 
+class SessionIn(BaseModel):
+    title: str | None = None
+    source_id: uuid.UUID | None = None  # scope planning to one system (optional)
+
+
 @router.post("/chat/sessions")
-async def create_session(p: Principal = Depends(get_principal), db: AsyncSession = Depends(get_db)) -> dict:
-    s = ChatSession(tenant_id=p.tenant_id, user_id=p.user.id, title="新会话")
+async def create_session(
+    body: SessionIn | None = None,
+    p: Principal = Depends(get_principal), db: AsyncSession = Depends(get_db),
+) -> dict:
+    body = body or SessionIn()
+    s = ChatSession(tenant_id=p.tenant_id, user_id=p.user.id,
+                    title=(body.title or "新会话")[:160], source_id=body.source_id)
     db.add(s)
     await db.commit()
-    return {"id": str(s.id), "title": s.title}
+    return {"id": str(s.id), "title": s.title, "source_id": str(s.source_id) if s.source_id else None}
 
 
 @router.get("/chat/sessions/{session_id}/messages")
@@ -152,7 +162,7 @@ async def send_message(
 
     plan = await orchestrator.create_plan(
         db, tenant_id=p.tenant_id, session_id=session_id,
-        identity=p.identity, instruction=body.content,
+        identity=p.identity, instruction=body.content, source_id=s.source_id,
     )
 
     if plan.status == "denied":

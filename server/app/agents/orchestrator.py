@@ -29,14 +29,14 @@ from app.services.capabilities import Capability
 CAP_FOR_KIND = {"query": "data", "parse": "parsed", "write": "write"}
 
 
-async def _available_operations(db: AsyncSession, tenant_id: uuid.UUID, role: str) -> list[dict]:
-    ops = (
-        await db.execute(
-            select(Operation).where(
-                Operation.tenant_id == tenant_id, Operation.status == "active"
-            )
-        )
-    ).scalars().all()
+async def _available_operations(db: AsyncSession, tenant_id: uuid.UUID, role: str,
+                                source_id: uuid.UUID | None = None) -> list[dict]:
+    q = select(Operation).where(Operation.tenant_id == tenant_id, Operation.status == "active")
+    if source_id is not None:
+        # scope the catalogue to the session's system so the P-LLM can't pick an
+        # operation belonging to a different registered system
+        q = q.where(Operation.source_id == source_id)
+    ops = (await db.execute(q)).scalars().all()
     op_ids = [op.id for op in ops]
     perms_by_op: dict = {}
     if op_ids:
@@ -81,7 +81,7 @@ async def _eligible_admin_count(db: AsyncSession, tenant_id: uuid.UUID) -> int:
 
 async def create_plan(
     db: AsyncSession, *, tenant_id: uuid.UUID, session_id: uuid.UUID,
-    identity: Identity, instruction: str,
+    identity: Identity, instruction: str, source_id: uuid.UUID | None = None,
 ) -> ExecutionPlan:
     trace = Trace(
         tenant_id=tenant_id, title=instruction[:120], actor_id=uuid.UUID(identity.user_id),
@@ -94,7 +94,7 @@ async def create_plan(
                              {"role": identity.role, "instruction": instruction},
                              cap="data", actor_id=uuid.UUID(identity.user_id))
 
-    ops = await _available_operations(db, tenant_id, identity.role)
+    ops = await _available_operations(db, tenant_id, identity.role, source_id)
     op_by_key = {o["op_key"]: o for o in ops}
     draft = await planner.plan(db, trace.id, tenant_id=tenant_id, role=identity.role,
                                instruction=instruction, operations=ops)
