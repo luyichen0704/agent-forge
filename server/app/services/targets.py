@@ -154,10 +154,29 @@ def _body_fields(op: dict, spec: dict) -> list[str]:
     return []
 
 
+def _spec_base_path(spec: dict) -> str:
+    """API path prefix to prepend to every endpoint path.
+
+    Swagger 2.0 puts it in `basePath` (e.g. Gitea "/api/v1"); OpenAPI 3 puts it
+    in the path portion of `servers[0].url` (e.g. "/api/v3"). Dropping it makes
+    every generated call hit the wrong URL (404), so it must be preserved."""
+    base = spec.get("basePath")  # Swagger 2.0
+    if not base:
+        servers = spec.get("servers")
+        if isinstance(servers, list) and servers and isinstance(servers[0], dict):
+            url = str(servers[0].get("url", ""))
+            # take only the path component of an absolute or relative server url
+            m = re.match(r"^(?:https?://[^/]+)?(/[^?#]*)", url)
+            base = m.group(1) if m else ""
+    base = (base or "").rstrip("/")
+    return base if base and base != "/" else ""
+
+
 def summarize_endpoints(spec: dict, limit: int = 150) -> list[dict]:
     """Flatten an OpenAPI 2/3 spec (or WordPress /wp-json route map) into
     [{method, path, summary, tag, params, body_fields}]."""
     out: list[dict] = []
+    base = _spec_base_path(spec)
     paths = spec.get("paths")
     if isinstance(paths, dict):  # OpenAPI 2/3
         for path, ops in paths.items():
@@ -174,16 +193,17 @@ def summarize_endpoints(spec: dict, limit: int = 150) -> list[dict]:
                 }
                 out.append({
                     "method": method.upper(),
-                    "path": path,
+                    "path": base + path,
                     "summary": (op.get("summary") or op.get("operationId") or op.get("description") or "")[:100],
                     "tag": (op.get("tags") or [""])[0],
                     "params": params,
                     "body_fields": _body_fields(op, spec) if method.upper() != "GET" else [],
                 })
-    elif isinstance(spec.get("routes"), dict):  # WordPress route map
+    elif isinstance(spec.get("routes"), dict):  # WordPress route map (served under /wp-json)
+        wp_prefix = "/wp-json"
         for path, route in spec["routes"].items():
-            if not isinstance(route, dict) or path.count("/") > 4:
-                continue
+            if not isinstance(route, dict) or path.count("/") > 4 or "{" in path or path == "/":
+                continue  # skip index + templated/namespace-root routes the LLM can't call blindly
             for ep in route.get("endpoints", []):
                 for method in ep.get("methods", []):
                     if method not in ("GET", "POST", "PUT", "PATCH", "DELETE"):
@@ -195,7 +215,8 @@ def summarize_endpoints(spec: dict, limit: int = 150) -> list[dict]:
                                "desc": ""}
                         for name, a in list(args.items())[:10] if isinstance(a, dict)
                     }
-                    out.append({"method": method, "path": path, "summary": "", "tag": path.split("/")[1] if "/" in path else "",
+                    out.append({"method": method, "path": wp_prefix + path, "summary": "",
+                                "tag": path.split("/")[1] if "/" in path else "",
                                 "params": params if method == "GET" else {},
                                 "body_fields": list(args.keys())[:12] if method != "GET" else []})
     return out[:limit]

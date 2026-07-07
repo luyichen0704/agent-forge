@@ -99,6 +99,26 @@ def test_summarize_endpoints_wordpress_routes():
     assert methods == {"GET", "POST"}
     post = next(e for e in eps if e["method"] == "POST")
     assert "title" in post["body_fields"]
+    assert all(e["path"] == "/wp-json/wp/v2/posts" for e in eps)  # /wp-json prefix applied
+
+
+def test_base_path_prepended_swagger2():
+    spec = {"swagger": "2.0", "basePath": "/api/v1",
+            "paths": {"/orgs": {"get": {"summary": "list orgs"}}}}
+    eps = targets.summarize_endpoints(spec)
+    assert eps[0]["path"] == "/api/v1/orgs"
+
+
+def test_base_path_prepended_openapi3_servers():
+    spec = {"openapi": "3.0.0", "servers": [{"url": "http://h:3000/api/v3"}],
+            "paths": {"/repos": {"get": {"summary": "list"}}}}
+    eps = targets.summarize_endpoints(spec)
+    assert eps[0]["path"] == "/api/v3/repos"
+
+
+def test_base_path_absent_is_noop():
+    spec = {"openapi": "3.0.0", "paths": {"/x": {"get": {}}}}
+    assert targets.summarize_endpoints(spec)[0]["path"] == "/x"
 
 
 def test_endpoint_digest_compact():
