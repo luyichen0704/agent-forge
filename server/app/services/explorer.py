@@ -228,7 +228,7 @@ async def run_exploration(job_id: uuid.UUID) -> None:
                         "method": op.get("method"), "path": op.get("path"),
                     })
                     continue
-                kind = _infer_kind(ep["method"], key, op.get("desc", ""),
+                kind = _infer_kind(ep["method"], raw_key, op.get("desc", ""),
                                    ep.get("path", ""), ep.get("summary", ""))
                 binding = {
                     "source_id": str(source.id), "method": ep["method"], "path": ep["path"],
