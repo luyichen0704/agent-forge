@@ -201,11 +201,16 @@ async def test_validate_endpoints_keeps_real_drops_hallucinated(monkeypatch):
     ]
     kept = await targets.validate_endpoints({"base_url": "http://x"}, targets.normalize_manual(proposed))
     paths = {(e["method"], e["path"]) for e in kept}
+    verified = {(e["method"], e["path"]) for e in kept if e.get("verified")}
     assert ("GET", "/api/v1/users") in paths          # real read kept
     assert ("GET", "/api/v1/ghost") not in paths       # 404 dropped
     assert ("GET", "/api/v1/spa") not in paths          # HTML SPA-fallback dropped
-    assert ("POST", "/api/v1/users") in paths           # write kept: sibling collection is live
-    assert ("POST", "/api/v1/ghosts") not in paths      # write dropped: no live sibling
+    # writes are NEVER probed (side effects) → ALL proposed writes are kept for
+    # comprehensive coverage; they run only after human approval + honest failure.
+    assert ("POST", "/api/v1/users") in paths
+    assert ("POST", "/api/v1/ghosts") in paths
+    assert ("POST", "/api/v1/users") in verified       # sibling read confirmed → higher confidence
+    assert ("POST", "/api/v1/ghosts") not in verified  # no live sibling → kept but unverified
 
 
 @pytest.mark.asyncio
@@ -313,3 +318,24 @@ def test_api_body_error_detection():
     assert api_body_error({"id": 1, "name": "x"}) is None
     assert api_body_error([{"id": 1}]) is None      # list payload
     assert api_body_error({"code": 200, "data": []}) is None  # code=200 not treated as error
+
+
+def test_risk_policy_by_operation():
+    from app.services.explorer import _risk_policy
+    # reads: broad, auto
+    risk, confirm, grants = _risk_policy("query", "repo.list", "GET")
+    assert risk == "low" and confirm == "auto"
+    assert ("customer", "self") in grants
+    # ordinary write: confirm, staff+admin
+    risk, confirm, grants = _risk_policy("mutation", "repo.create", "POST")
+    assert risk == "high" and confirm == "confirm"
+    assert ("employee", None) in grants and ("admin", None) in grants
+    # destructive: dual approval, admins ONLY
+    risk, confirm, grants = _risk_policy("mutation", "repo.delete", "DELETE")
+    assert risk == "critical" and confirm == "dual"
+    assert grants == [("admin", None)]
+    # admin/security-sensitive change: also dual + admin-only
+    risk, confirm, grants = _risk_policy("mutation", "user.ban", "POST")
+    assert confirm == "dual" and grants == [("admin", None)]
+    risk, confirm, grants = _risk_policy("mutation", "channel.update", "PUT")
+    assert confirm == "dual"  # 'channel' is billing-sensitive in _ADMIN_AREA

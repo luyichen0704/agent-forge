@@ -389,11 +389,11 @@ async def _register_operation(db, source, key, kind, job_id, *,
         if input_schema:
             existing.input_schema_json = input_schema
         return
-    confirm = "confirm" if kind == "mutation" else "auto"
+    method = (binding or {}).get("method", "").upper()
+    risk, confirm, grants = _risk_policy(kind, key, method)
     status = "pending" if kind == "mutation" else "active"
     op = Operation(tenant_id=tenant_id, source_id=source.id, op_key=key, version=1, kind=kind,
-                   confirm_level=confirm,
-                   risk_level="high" if kind == "mutation" else "low", status=status,
+                   confirm_level=confirm, risk_level=risk, status=status,
                    input_schema_json=input_schema or {},
                    executor_binding=executor, rollback_binding=executor,
                    binding_json=binding,
@@ -401,10 +401,30 @@ async def _register_operation(db, source, key, kind, job_id, *,
                    published_at=datetime.now(timezone.utc) if status == "active" else None)
     db.add(op)
     await db.flush()
-    # default grants: employees + admins; reads also to customers (scoped self)
-    grants = [("employee", None), ("admin", None)]
-    if kind == "query":
-        grants.append(("customer", "self"))
     for role, scope in grants:
         db.add(OperationPermission(operation_id=op.id, subject_type="role", subject_id=role,
                                    effect="allow", condition_json={"scope": scope} if scope else {}))
+
+
+# destructive / privileged verbs → tightest governance
+_DESTRUCTIVE = ("delete", "remove", "destroy", "purge", "drop", "ban", "revoke",
+                "disable", "deactivate", "wipe", "reset", "cancel")
+_ADMIN_AREA = ("admin", "setting", "config", "option", "policy", "permission",
+               "role", "secret", "key", "credential", "billing", "quota", "channel")
+
+
+def _risk_policy(kind: str, key: str, method: str) -> tuple[str, str, list]:
+    """Governance for a discovered op, by risk. Returns (risk, confirm, grants).
+    Reads are broadly available; writes need confirmation; destructive or
+    admin/security-sensitive writes require dual approval and are admin-only."""
+    k = key.lower()
+    if kind != "mutation":
+        # reads: everyone (customers self-scoped), auto
+        return "low", "auto", [("employee", None), ("admin", None), ("customer", "self")]
+    destructive = method == "DELETE" or any(w in k for w in _DESTRUCTIVE)
+    sensitive = any(a in k for a in _ADMIN_AREA)
+    if destructive or sensitive:
+        # delete / admin / security-sensitive change → four-eyes, admins only
+        return "critical", "dual", [("admin", None)]
+    # ordinary create/update → single confirmation, staff + admins
+    return "high", "confirm", [("employee", None), ("admin", None)]

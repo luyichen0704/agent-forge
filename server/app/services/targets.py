@@ -174,12 +174,16 @@ async def validate_endpoints(config: dict, endpoints: list[dict],
         # item routes end in a param (/users/{id}); their collection is the parent
         return path.rsplit("/", 1)[0] if path.endswith("}") else path
 
+    # Writes CANNOT be safely probed (calling them would cause a real side effect),
+    # so we keep ALL proposed writes rather than dropping them — comprehensive
+    # business coverage (create/update/delete for every resource) matters, and a
+    # write is safe to register even if unverified: it is registered `pending`,
+    # requires human approval before it can run, and if the endpoint turns out
+    # wrong the governed execution fails HONESTLY (http_404, no side effect). A
+    # write whose collection IS a confirmed live read gets a higher confidence flag.
     for e in writes:
-        # accept a write ONLY when the exact collection it targets is a confirmed
-        # live read route (e.g. POST /api/v1/users ↔ GET /api/v1/users). Never call
-        # the write itself — that would cause a side effect during discovery.
-        if e["path"] in live_read_paths or _collection(e["path"]) in live_read_paths:
-            out.append({**e, "verified": False, "probe_status": None})
+        confirmed = e["path"] in live_read_paths or _collection(e["path"]) in live_read_paths
+        out.append({**e, "verified": confirmed, "probe_status": None})
     return out
 
 
