@@ -298,3 +298,18 @@ def test_looks_like_write_intent():
     assert _looks_like_write("create a new repo")
     assert not _looks_like_write("列出所有的仓库")
     assert not _looks_like_write("有哪些用户")
+
+
+def test_api_body_error_detection():
+    from app.executors.base import api_body_error
+    # new-api style: HTTP 200 but success:false
+    assert api_body_error({"success": False, "message": "json: cannot unmarshal string"}) == "json: cannot unmarshal string"
+    assert api_body_error({"ok": False, "error": "bad"}) is not None
+    assert api_body_error({"error": "not found"}) == "not found"
+    assert api_body_error({"errno": 500, "msg": "boom"}) == "boom"
+    # genuine successes → no error
+    assert api_body_error({"success": True, "data": {"id": 1}}) is None
+    assert api_body_error({"items": [1, 2, 3]}) is None
+    assert api_body_error({"id": 1, "name": "x"}) is None
+    assert api_body_error([{"id": 1}]) is None      # list payload
+    assert api_body_error({"code": 200, "data": []}) is None  # code=200 not treated as error

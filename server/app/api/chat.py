@@ -117,10 +117,12 @@ def _human_row(r: dict) -> str:
         pairs.append(f"{k}: {s[:40] + '…' if len(s) > 40 else s}")
         if len(pairs) >= 4:
             break
-    if not pairs:  # fall back to whatever scalar fields exist
-        for k, v in list(r.items())[:3]:
-            if not isinstance(v, (dict, list)):
+    if not pairs:  # fall back to whatever scalar fields exist (still skip noise)
+        for k, v in list(r.items())[:4]:
+            if k not in _NOISE_KEYS and not isinstance(v, (dict, list)) and str(v) != "":
                 pairs.append(f"{k}: {str(v)[:40]}")
+                if len(pairs) >= 3:
+                    break
     return "，".join(pairs) or "（1 条记录）"
 
 

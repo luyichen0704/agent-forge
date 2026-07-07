@@ -44,7 +44,11 @@ Return JSON with this exact shape:
   ],
   "policy_hints": ["<short hint>", ...]
 }
-Only use op_key values present in the catalogue. Keep steps minimal and correct."""
+Only use op_key values present in the catalogue. Keep steps minimal and correct.
+All natural-language fields you write — intent, reasoning_summary, every step
+label, and policy_hints — MUST be in the SAME LANGUAGE as the user's instruction
+(Chinese if the instruction is Chinese). Never write these in English for a
+Chinese user; op_key values stay as given."""
 
 
 async def plan(

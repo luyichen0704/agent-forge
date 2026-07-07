@@ -157,6 +157,16 @@ async def validate_endpoints(config: dict, endpoints: list[dict],
             is_redirect = 300 <= resp.status_code < 400  # usually an auth/login redirect
             if resp.status_code in (404, 501) or is_spa or is_redirect:
                 continue
+            # 200 with a body-level failure flag (e.g. new-api /api/user/dashboard
+            # → {"success":false,"message":"strconv.Atoi..."}) is a mis-bound route,
+            # not a real endpoint — don't verify it.
+            try:
+                from app.executors.base import api_body_error
+                if resp.headers.get("content-type", "").startswith("application/json") \
+                        and api_body_error(resp.json()):
+                    continue
+            except (ValueError, ImportError):
+                pass
             out.append({**e, "verified": True, "probe_status": resp.status_code})
             live_read_paths.add(e["path"])
 

@@ -32,6 +32,35 @@ def _truncate(payload: Any, limit: int = 4000) -> Any:
 _ENVELOPE_KEYS = ("items", "data", "results", "records", "list", "rows", "value")
 
 
+def api_body_error(payload: Any) -> str | None:
+    """Detect a body-level failure on an HTTP 200 response. Many enterprise APIs
+    (Go/PHP: new-api, WordPress, ...) return 200 with {"success":false,...} or an
+    error envelope on failure — trusting the HTTP status alone would report a
+    failed write as success. Returns a short error message if the body signals
+    failure, else None. Conservative: only explicit failure flags count."""
+    if not isinstance(payload, dict):
+        return None
+    def msg(default: str) -> str:
+        for k in ("message", "msg", "error", "detail", "error_description"):
+            v = payload.get(k)
+            if isinstance(v, str) and v.strip():
+                return v[:200]
+        return default
+    if payload.get("success") is False or payload.get("ok") is False:
+        return msg("api reported success=false")
+    err = payload.get("error")
+    if err and not isinstance(err, bool) and "data" not in payload and "items" not in payload:
+        # {"error": "..."} or {"error": {...}} with no data payload
+        if isinstance(err, str) and err.strip():
+            return err[:200]
+        if isinstance(err, dict) and err:
+            return str(err.get("message") or err.get("code") or "api error")[:200]
+    errno = payload.get("errno")
+    if isinstance(errno, int) and errno != 0:
+        return msg(f"errno={errno}")
+    return None
+
+
 def _coerce(value: Any, declared_type: str | None) -> Any:
     """Best-effort coerce a value to the parameter's declared JSON type so a
     string like "3" reaches an []int/int field as the right type. Target-agnostic."""
@@ -252,8 +281,14 @@ class APIExecutor(Executor):
             payload = resp.text[:2000]
         # a data API returning 3xx (redirect to login/HTML) or >=400 is a failure,
         # never a success — do not let a followed redirect mask it (client does not
-        # follow redirects; 3xx is surfaced explicitly)
-        error_code = None if resp.status_code < 300 else f"http_{resp.status_code}"
+        # follow redirects; 3xx is surfaced explicitly). ALSO: many APIs return
+        # HTTP 200 with a body-level failure flag ({"success":false,...}) — that is
+        # a failure too, or a write would be falsely reported as done.
+        if resp.status_code >= 300:
+            error_code = f"http_{resp.status_code}"
+        else:
+            body_err = api_body_error(payload)
+            error_code = f"api_error:{body_err}" if body_err else None
         result = ExecutorResult(
             before_state={},
             after_state={"http_status": resp.status_code, "method": method, "path": path,
