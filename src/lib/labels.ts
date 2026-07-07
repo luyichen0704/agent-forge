@@ -123,6 +123,23 @@ export const EXECUTOR_LABEL: Record<string, string> = {
 };
 export const executorLabel = (e?: string | null): string => (e ? EXECUTOR_LABEL[e] ?? '系统执行' : '系统执行');
 
+/* ---- 插件实现名（类名）→ 业务别名。技术类名下沉为副标题。 ---- */
+export const IMPL_LABEL: Record<string, string> = {
+  CodeExplorer: '代码库探索', DatabaseExplorer: '数据库探索', APIExplorer: '接口探索',
+  AdminPanelExplorer: '后台探索', DocExplorer: '文档探索',
+  APIExecutor: '接口执行', FunctionExecutor: '内置执行', SQLExecutor: '数据库执行', RPAExecutor: '流程执行',
+  PythonPolicyEngine: '内置策略引擎', OPAPolicyEngine: 'OPA 策略引擎', CasbinPolicyEngine: 'Casbin 策略引擎',
+  PostgresAuditSink: '数据库审计存储', S3AuditSink: '对象存储审计', ElasticAuditSink: '检索型审计存储',
+};
+/** 保留 " · 角色" 后缀（如 "AnthropicAdapter · P-LLM"）并翻译模型代号。 */
+export function implLabel(name: string): string {
+  const [head, ...restParts] = name.split('·').map((s) => s.trim());
+  const rest = restParts.join(' · ')
+    .replace(/P-LLM/gi, '规划模型').replace(/Q-LLM/gi, '解析模型');
+  const mapped = IMPL_LABEL[head] ?? head;
+  return rest ? `${mapped} · ${rest}` : mapped;
+}
+
 /* ---- 实时探索事件前缀 ---- */
 export const STREAM_LABEL: Record<string, string> = {
   phase: '阶段', op: '发现操作', rule: '业务规则', done: '完成',

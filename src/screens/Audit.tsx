@@ -19,31 +19,56 @@ export function AuditMain() {
   const { data, isLoading } = useTraceAudit(traceId);
 
   if (isLoading) return <div className="pad16 muted sm">加载审计链…</div>;
-  if (!data || data.events.length === 0) return <div className="pad16 muted sm">暂无审计事件。</div>;
+  if (!data || data.events.length === 0) {
+    return (
+      <div className="pad16 col center fill gap8 muted sm" style={{ textAlign: 'center' }}>
+        <Icon n="shield" s={28} c="var(--ink-4)" />
+        <span>暂无审计记录。</span>
+        <span className="xs">在「对话」里执行一次操作后，这里会出现不可篡改的记录链。</span>
+      </div>
+    );
+  }
 
   const v = data.verification;
+  const ok = v.valid;
   return (
-    <div className="pad16 fill scroll" data-tour="audit-chain">
-      <div className="row vcenter gap8" style={{ marginBottom: 12 }}>
-        <Tag k={v.valid ? 'trusted' : 'write'}>{v.valid ? '✓ 完整性已验证' : '记录已被篡改'}</Tag>
-        <span className="xs muted tnum">{v.count} 条记录 · 环环相扣不可改</span>
+    <div className="pad16 fill scroll col gap12" data-tour="audit-chain">
+      {/* integrity banner */}
+      <div className={`audit-banner ${ok ? 'ok' : 'bad'}`}>
+        <span className="ab-mark">
+          <Icon n={ok ? 'shield' : 'x'} s={20} c="#fff" />
+        </span>
+        <div className="col fill" style={{ gap: 2 }}>
+          <span className="b" style={{ fontSize: 13, color: ok ? '#0a7a53' : 'var(--danger)' }}>
+            {ok ? '完整性已验证' : `记录在第 ${v.broken_at_seq} 环被篡改`}
+          </span>
+          <span className="xs muted">
+            {ok
+              ? `${v.count} 条记录环环相扣，任何篡改都会被立即发现`
+              : '哈希链校验未通过，请立即排查'}
+          </span>
+        </div>
+        <Tag k={ok ? 'trusted' : 'write'}>{ok ? '✓ 可信' : '⚠ 异常'}</Tag>
       </div>
+
       <div className="card pad16">
         <div className="col">
           {data.events.map((ev, i) => (
             <div key={ev.seq} className="row gap10" style={{ alignItems: 'stretch' }}>
-              <div className="col vcenter" style={{ width: 16, flex: '0 0 auto' }}>
-                <Dot k={ev.cap} />
+              <div className="col vcenter" style={{ width: 18, flex: '0 0 auto' }}>
+                <span className="audit-node"><Dot k={ev.cap} /></span>
                 {i < data.events.length - 1 && <div className="edge fill" style={{ width: 2, marginTop: 2 }} />}
               </div>
-              <div className="col gap2" style={{ paddingBottom: 12 }}>
+              <div className="col gap2" style={{ paddingBottom: 14, minWidth: 0 }}>
                 <div className="row vcenter gap8">
+                  <span className="xs mono muted" style={{ minWidth: 20 }}>#{ev.seq}</span>
                   <span className="b xs" style={{ color: 'var(--ink)' }}>{eventLabel(ev.event)}</span>
                   {ev.event === 'OPERATION_EXECUTED' && <Tag k="write">写操作</Tag>}
                 </div>
                 {auditPayloadSummary(ev.payload) && <span className="xs muted">{auditPayloadSummary(ev.payload)}</span>}
-                <span className="xs mono" style={{ color: 'var(--ink-4)' }}>
-                  校验码 {ev.hash.slice(0, 8)}… · 承接上一环 {ev.prev_hash.slice(0, 8)}…
+                <span className="xs mono row vcenter gap5" style={{ color: 'var(--ink-4)' }}>
+                  <Icon n="lock" s={10} c="var(--cap-trusted)" />
+                  校验码 {ev.hash.slice(0, 8)}… · 承接 {ev.prev_hash.slice(0, 8)}…
                 </span>
               </div>
             </div>

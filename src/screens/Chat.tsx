@@ -4,11 +4,23 @@ import { Btn, Dot, Icon, Note, Tag } from '../components/kit';
 import {
   useSessions, useEnsureSession, useMessages, useSendMessage, useConfirmPlan, useCancelPlan,
 } from '../features/chat';
+import { useSources } from '../features/sources';
 import { useQueryClient } from '@tanstack/react-query';
-import type { Plan } from '../api/types';
+import type { DataSource, Plan } from '../api/types';
 import { confirmLabel, capLabel, OP_KEY_LABEL, stepKindLabel } from '../lib/labels';
+import { shortSourceName, relTime } from '../lib/format';
+import { setSessionMeta, getSessionMeta } from '../lib/sessionMeta';
 
 const capDot = (c: string) => (c === 'query' ? 'data' : c === 'parse' ? 'parsed' : 'write');
+
+/* Context-aware example prompts (suggestions the user can one-click fill). */
+function examplePrompts(sourceName: string | null): string[] {
+  if (!sourceName) {
+    return ['查询最近的订单记录', '看看有哪些待处理的任务', '列出系统里的用户'];
+  }
+  const s = shortSourceName(sourceName);
+  return [`在 ${s} 里查一下最近的记录`, `${s} 里都有哪些数据？`, `列出我在 ${s} 中能查看的内容`];
+}
 
 function PlanCard({ plan }: { plan: Plan }) {
   return (
@@ -35,22 +47,33 @@ function PlanCard({ plan }: { plan: Plan }) {
   );
 }
 
+function sessionOptionLabel(id: string, title: string): string {
+  const meta = getSessionMeta(id);
+  const sys = meta?.sourceName ? shortSourceName(meta.sourceName) : '所有系统';
+  const when = meta?.createdAt ? ` · ${relTime(meta.createdAt)}` : '';
+  const t = (title || '新会话').slice(0, 18);
+  return `${t} · ${sys}${when}`;
+}
+
 export function ChatMain() {
   const { setTraceSel, toast, chatSession, setChatSession } = useApp();
   const qc = useQueryClient();
   const sessions = useSessions();
+  const sourcesQ = useSources();
   const ensure = useEnsureSession();
   const sessionId = chatSession ?? undefined;
-  const setSessionId = (id: string) => setChatSession(id);
   const [draft, setDraft] = useState('');
+  const [scope, setScope] = useState<string>(''); // '' = 所有系统, else source id
   const endRef = useRef<HTMLDivElement>(null);
+
+  const sources: DataSource[] = sourcesQ.data?.items ?? [];
 
   // pick or create a session (shared via context so the aside sees the same one)
   useEffect(() => {
     if (sessionId || sessions.isLoading) return;
     const first = sessions.data?.items[0];
-    if (first) setSessionId(first.id);
-    else if (!ensure.isPending) ensure.mutate(undefined, { onSuccess: (s) => setSessionId(s.id) });
+    if (first) setChatSession(first.id);
+    else if (!ensure.isPending) ensure.mutate(undefined, { onSuccess: (s) => setChatSession(s.id) });
   }, [sessions.data, sessions.isLoading, sessionId, ensure, setChatSession]);
 
   const messages = useMessages(sessionId);
@@ -68,6 +91,19 @@ export function ChatMain() {
     }
   }, [messages.data, setTraceSel]);
 
+  function newSession() {
+    const src = sources.find((s) => s.id === scope);
+    ensure.mutate({ source_id: scope || undefined }, {
+      onSuccess: (s) => {
+        setSessionMeta(s.id, { sourceId: scope || null, sourceName: src?.name ?? null, createdAt: Date.now() });
+        setChatSession(s.id);
+        qc.invalidateQueries({ queryKey: ['chat', 'sessions'] });
+        toast(scope ? `已新建对话 · 只在「${shortSourceName(src?.name)}」内规划` : '已新建对话 · 未限定系统', 'ok');
+      },
+      onError: (e) => toast(`新建失败：${(e as Error).message}`, 'warn'),
+    });
+  }
+
   function doSend() {
     const text = draft.trim();
     if (!text || !sessionId || send.isPending) return;
@@ -76,20 +112,71 @@ export function ChatMain() {
   }
 
   const items = messages.data?.items ?? [];
+  const curMeta = sessionId ? getSessionMeta(sessionId) : undefined;
+  const curSourceName = curMeta?.sourceName ?? null;
+  const sessionList = sessions.data?.items ?? [];
 
   return (
     <div className="col fill" style={{ minHeight: 0 }}>
+      {/* session + system scope bar */}
+      <div className="chat-bar">
+        <div className="row vcenter gap8 fill" style={{ minWidth: 0 }}>
+          <Icon n="chat" s={14} c="var(--ink-4)" />
+          {sessionList.length > 0 ? (
+            <select className="sel" aria-label="切换会话" value={sessionId ?? ''}
+              onChange={(e) => setChatSession(e.target.value)} style={{ maxWidth: 260 }}>
+              {sessionList.map((s) => (
+                <option key={s.id} value={s.id}>{sessionOptionLabel(s.id, s.title)}</option>
+              ))}
+            </select>
+          ) : <span className="sm muted">新对话</span>}
+          <span className={`scope-chip ${curSourceName ? 'on' : ''}`}>
+            <Dot k={curSourceName ? 'data' : 'off'} />
+            {curSourceName ? `只在 ${shortSourceName(curSourceName)} 内规划` : '未限定系统'}
+          </span>
+        </div>
+        <div className="row vcenter gap6" style={{ flex: '0 0 auto' }}>
+          <select className="sel" aria-label="选择系统范围" value={scope}
+            onChange={(e) => setScope(e.target.value)} style={{ maxWidth: 200 }}
+            title="新建对话时限定只在该系统的操作里规划">
+            <option value="">所有系统（不限定）</option>
+            {sources.map((s) => (
+              <option key={s.id} value={s.id}>{shortSourceName(s.name)}</option>
+            ))}
+          </select>
+          <Btn sz="sm" k="pri" ic="plus" disabled={ensure.isPending} onClick={newSession}>新建对话</Btn>
+        </div>
+      </div>
+
       <div className="col gap12 fill scroll" style={{ padding: '16px 18px' }}>
         {messages.isLoading && <span className="muted sm">加载会话…</span>}
         {items.length === 0 && !messages.isLoading && (
-          <div className="col center fill gap8 muted sm">
-            <Icon n="chat" s={28} c="var(--ink-4)" />
-            用自然语言下达指令，系统会生成可审计的执行计划。
+          <div className="col center fill gap12 muted" style={{ maxWidth: 460, margin: '0 auto', textAlign: 'center' }}>
+            <span style={{ width: 46, height: 46, borderRadius: 12, background: 'var(--accent-soft)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <Icon n="chat" s={22} c="var(--accent-ink)" />
+            </span>
+            <div className="col gap4">
+              <span className="h3" style={{ color: 'var(--ink)' }}>用自然语言下达指令</span>
+              <span className="sm">
+                {curSourceName
+                  ? `当前对话已限定在「${shortSourceName(curSourceName)}」，系统只会在该系统的操作里规划。`
+                  : '建议先在右上角选择一个系统再新建对话，避免在全部操作里混选。也可以直接提问。'}
+              </span>
+            </div>
+            <div className="col gap6" style={{ width: '100%' }}>
+              <span className="eyebrow" style={{ alignSelf: 'flex-start' }}>试试这样问</span>
+              {examplePrompts(curSourceName).map((q, i) => (
+                <button key={i} className="example-chip" onClick={() => setDraft(q)}>
+                  <Icon n="spark" s={13} c="var(--accent)" /><span className="fill" style={{ textAlign: 'left' }}>{q}</span>
+                  <Icon n="chevron" s={12} c="var(--ink-4)" />
+                </button>
+              ))}
+            </div>
           </div>
         )}
         {items.map((m) => (
           <div key={m.id} className="col gap8" style={{ alignSelf: m.role === 'user' ? 'flex-end' : 'flex-start', maxWidth: '82%' }}>
-            <div className={`msg ${m.role === 'user' ? 'u' : 'a'}`} style={{ maxWidth: '100%' }}>{m.content}</div>
+            <div className={`msg ${m.role === 'user' ? 'u' : 'a'}`} style={{ maxWidth: '100%', whiteSpace: 'pre-wrap' }}>{m.content}</div>
             {m.plan && <PlanCard plan={m.plan} />}
             {m.plan && m.plan.status === 'awaiting_confirm' && (
               <div className="row gap8" data-tour="plan-confirm">
@@ -132,6 +219,7 @@ export function ChatMain() {
 export function ChatAside() {
   const { chatSession } = useApp();
   const messages = useMessages(chatSession ?? undefined);
+  const meta = chatSession ? getSessionMeta(chatSession) : undefined;
 
   const latestPlan = (() => {
     const items = messages.data?.items ?? [];
@@ -146,6 +234,15 @@ export function ChatAside() {
         <Tag k="q">只读</Tag>
       </div>
       <div className="pad14 col gap10 fill scroll">
+        <div className="row vcenter gap6 sm">
+          <Icon n="layers" s={13} c="var(--ink-4)" />
+          <span className="muted">规划范围</span>
+          <span className="fill" />
+          <span className="b" style={{ color: meta?.sourceName ? 'var(--cap-data)' : 'var(--ink-3)' }}>
+            {meta?.sourceName ? shortSourceName(meta.sourceName) : '所有系统'}
+          </span>
+        </div>
+        <div className="divln" />
         {!latestPlan && <span className="muted sm">发送指令后，这里会显示系统生成的执行计划与数据说明。</span>}
         {latestPlan && (
           <>

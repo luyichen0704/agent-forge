@@ -1,9 +1,9 @@
 import { useEffect } from 'react';
-import { Dot, Note, Sw } from '../components/kit';
+import { Dot, Note, Sw, Tag, Icon } from '../components/kit';
 import { useApp } from '../lib/appContext';
 import { useTraces, useTraceFlow } from '../features/traces';
 import type { CapKind } from '../api/types';
-import { flowNodeLabel, nodeSourceLabel } from '../lib/labels';
+import { flowNodeLabel, nodeSourceLabel, capLabel } from '../lib/labels';
 
 const LEGEND: Array<[CapKind, string]> = [
   ['trusted', '可信输入 · 你直接提供'],
@@ -27,17 +27,35 @@ export function FlowMain() {
   const { data, isLoading } = useTraceFlow(traceId);
 
   if (isLoading) return <div className="fill center muted sm">加载数据流…</div>;
-  if (!data || data.nodes.length === 0) return <div className="fill center muted sm">暂无数据流，先在对话里执行一次操作。</div>;
+  if (!data || data.nodes.length === 0) {
+    return (
+      <div className="fill center col gap8 muted sm" style={{ textAlign: 'center' }}>
+        <Icon n="flow" s={28} c="var(--ink-4)" />
+        <span>暂无数据流，先在对话里执行一次操作。</span>
+      </div>
+    );
+  }
 
+  const LEGEND_ITEMS: CapKind[] = ['trusted', 'data', 'parsed', 'write'];
   return (
-    <div className="fill center scroll" style={{ background: 'var(--canvas)', padding: 24 }} data-tour="flow-graph">
+    <div className="fill scroll col vcenter" style={{ background: 'var(--canvas)', padding: 24 }} data-tour="flow-graph">
+      <div className="row vcenter gap10 wrap" style={{ marginBottom: 18 }}>
+        <span className="eyebrow">数据流向 · {data.nodes.length} 个节点</span>
+        <span className="divv" style={{ height: 14 }} />
+        {LEGEND_ITEMS.map((c) => (
+          <span key={c} className="row vcenter gap5 xs muted"><Dot k={c} />{capLabel(c)}</span>
+        ))}
+      </div>
       <div className="col center gap2">
         {data.nodes.map((node, i) => (
           <div key={node.node_id} className="col center">
-            <button className={`node ${node.cap} ${i === flowSel ? 'sel' : ''}`}
-              style={{ width: 340, justifyContent: 'space-between' }} onClick={() => setFlowSel(i)}>
-              <span style={{ fontSize: 11.5 }}>{flowNodeLabel(node.label)}</span>
-              <Dot k={node.cap} />
+            <button className={`node flow-node ${node.cap} ${i === flowSel ? 'sel' : ''}`}
+              style={{ width: 360, justifyContent: 'space-between' }} onClick={() => setFlowSel(i)}>
+              <span className="row vcenter gap8" style={{ minWidth: 0 }}>
+                <span className="flow-idx">{i + 1}</span>
+                <span style={{ fontSize: 11.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{flowNodeLabel(node.label)}</span>
+              </span>
+              <Tag k={node.cap}>{capLabel(node.cap)}</Tag>
             </button>
             {i < data.nodes.length - 1 && <div className="edge flow" style={{ height: 26 }} />}
           </div>

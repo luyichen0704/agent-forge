@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { Icon, Dot, Note, Tag } from '../components/kit';
 import { useApp } from '../lib/appContext';
 import { usePlugins } from '../features/plugins';
-import { ifaceLabel } from '../lib/labels';
+import { ifaceLabel, implLabel } from '../lib/labels';
 
 // treeSel mapping for plugins screen:
 // 0 = all, 1 = Explorer, 2 = Executor, 3 = PolicyEngine, 4 = AuditSink, 5 = LLMAdapter
@@ -61,7 +61,7 @@ export function PluginsMain() {
               </div>
               <div className="row gap6 wrap">
                 {p.impls.map((im, idx) => (
-                  <span key={idx} className="swatch"><Dot k={im.status === 'ok' ? 'ok' : im.status === 'wait' ? 'wait' : 'off'} />{im.name}</span>
+                  <span key={idx} className="swatch" title={im.name}><Dot k={im.status === 'ok' ? 'ok' : im.status === 'wait' ? 'wait' : 'off'} />{implLabel(im.name)}</span>
                 ))}
               </div>
             </div>
@@ -98,8 +98,8 @@ export function PluginsAside() {
         <div className="divln" />
         <span className="eyebrow">已注册实现</span>
         {p.impls.map((im, idx) => (
-          <div key={idx} className="row vcenter gap8 sm muted2">
-            <Dot k={im.status === 'ok' ? 'ok' : im.status === 'wait' ? 'wait' : 'off'} />{im.name}
+          <div key={idx} className="row vcenter gap8 sm muted2" title={im.name}>
+            <Dot k={im.status === 'ok' ? 'ok' : im.status === 'wait' ? 'wait' : 'off'} />{implLabel(im.name)}
             <span className="fill" /><span className="xs muted mono">{im.version}</span>
           </div>
         ))}

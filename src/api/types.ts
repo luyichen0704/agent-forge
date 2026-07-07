@@ -76,7 +76,7 @@ export interface Plan {
   reasoning_summary: string; policy_hints: string[]; steps: PlanStep[]; blocked?: boolean;
 }
 
-export interface ChatSession { id: string; title: string }
+export interface ChatSession { id: string; title: string; source_id?: string | null }
 export interface ChatMessage {
   id: string; role: 'user' | 'assistant' | 'system'; content: string; created_at: string; plan: Plan | null;
 }
