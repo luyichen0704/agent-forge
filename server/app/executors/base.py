@@ -103,7 +103,7 @@ class FunctionExecutor(Executor):
 
     async def execute(self, db, tenant_id, op_key, kwargs):
         if op_key == "refund.expedite":
-            key = str(kwargs.get("order_id") or kwargs.get("refund_id") or "")
+            key = str(kwargs.get("order_id") or kwargs.get("refund_id") or kwargs.get("id") or "")
             rec = await _record(db, tenant_id, "refund", key)
             if rec is None:
                 return ExecutorResult(error_code="not_found")
@@ -114,7 +114,7 @@ class FunctionExecutor(Executor):
             return ExecutorResult(before_state=before, after_state=after)
 
         if op_key == "order.cancel":
-            key = str(kwargs.get("order_id") or "")
+            key = str(kwargs.get("order_id") or kwargs.get("id") or "")
             rec = await _record(db, tenant_id, "order", key)
             if rec is None:
                 return ExecutorResult(error_code="not_found")

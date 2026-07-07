@@ -262,14 +262,36 @@ async def confirm_plan(db: AsyncSession, plan: ExecutionPlan, *, approver: Ident
     return plan
 
 
-async def _op_executor(db: AsyncSession, tenant_id: uuid.UUID, op_key: str):
-    op = (
+async def _load_op(db: AsyncSession, tenant_id: uuid.UUID, op_key: str) -> Operation | None:
+    return (
         await db.execute(
             select(Operation).where(Operation.tenant_id == tenant_id, Operation.op_key == op_key)
             .order_by(Operation.version.desc())
         )
     ).scalars().first()
+
+
+async def _op_executor(db: AsyncSession, tenant_id: uuid.UUID, op_key: str):
+    op = await _load_op(db, tenant_id, op_key)
     return get_executor(op.executor_binding if op else None)
+
+
+def _row_id(row: dict) -> str | None:
+    """Best-effort record identifier across arbitrary systems."""
+    for k in ("id", "key", "uuid", "uid", "name", "slug"):
+        if row.get(k) not in (None, ""):
+            return str(row[k])
+    return None
+
+
+def _id_params(op: Operation | None) -> list[str]:
+    """Parameter names of an operation that look like a record identifier
+    (declared `id` or `*_id`), path params first — target-agnostic."""
+    schema = (op.input_schema_json if op else None) or {}
+    params = schema.get("params") or {}
+    idish = [n for n in params if n == "id" or n.endswith("_id")]
+    idish.sort(key=lambda n: 0 if (params.get(n) or {}).get("in") == "path" else 1)
+    return idish
 
 
 async def _execute_plan(db: AsyncSession, plan: ExecutionPlan, trace: Trace, steps: list[PlanStep]) -> dict:
@@ -294,10 +316,9 @@ async def _execute_plan(db: AsyncSession, plan: ExecutionPlan, trace: Trace, ste
             # Q-LLM is actually invoked here, on quarantined data only
             parsed = await qparser.parse(db, plan.trace_id, tenant_id=trace.tenant_id,
                                           instruction=st.label, data_slice=rows)
+            # Q-LLM's typed selection is authoritative; no domain-specific fallback
             ids = parsed.get("selected_ids") or []
-            if not ids:  # fallback: derive pending refunds from the fetched rows
-                ids = [r.get("key") for r in rows if r.get("refund_status") == "pending"]
-            selected = [i for i in ids if i]
+            selected = [str(i) for i in ids if i not in (None, "")]
             st.status = "done"
             await audit.append_event(db, plan.trace_id, "QLLM_PARSED",
                                      {"selected": len(selected), "capability": "parsed"}, cap="parsed")
@@ -310,15 +331,18 @@ async def _execute_plan(db: AsyncSession, plan: ExecutionPlan, trace: Trace, ste
             if existing is not None:
                 st.status = "done" if existing.status == "ok" else "error"
                 continue
-            # resolve target: explicit arg → Q-LLM selection → first fetched row
+            # Resolve a chained record id from a prior step (Q-LLM selection, else
+            # first fetched row) and inject it into the write op's declared id-like
+            # params that the planner left unset — fully target-agnostic.
             kwargs = dict(st.input_refs_json or {})
-            order_id = kwargs.get("order_id") or (selected[0] if selected else None) \
-                or (rows[0].get("key") if rows else None)
-            if order_id:
-                kwargs["order_id"] = order_id
+            op = await _load_op(db, trace.tenant_id, st.op_key)
+            chained = (selected[0] if selected else None) or (_row_id(rows[0]) if rows else None)
+            if chained is not None:
+                for pname in _id_params(op) or ["id"]:
+                    kwargs.setdefault(pname, chained)
             kwargs.pop("user_id", None)  # not an executor arg; scope already applied at read
             st.input_refs_json = kwargs  # persist the resolved args
-            ex = await _op_executor(db, trace.tenant_id, st.op_key)
+            ex = get_executor(op.executor_binding if op else None)
             started = datetime.now(timezone.utc)
             res = await ex.execute(db, trace.tenant_id, st.op_key, kwargs)
             latency = int((datetime.now(timezone.utc) - started).total_seconds() * 1000)
@@ -331,7 +355,7 @@ async def _execute_plan(db: AsyncSession, plan: ExecutionPlan, trace: Trace, ste
             st.status = "done" if not res.error_code else "error"
             await audit.append_event(db, plan.trace_id, "OPERATION_EXECUTED",
                                      {"op": st.op_key, "executor": ex.name, "latency_ms": latency,
-                                      "target": order_id, "error": res.error_code}, cap="write")
+                                      "target": chained, "error": res.error_code}, cap="write")
         else:
             st.status = "done"
 
