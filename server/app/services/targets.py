@@ -125,7 +125,7 @@ async def discover_spec(config: dict) -> tuple[str | None, dict | None]:
 
 
 async def validate_endpoints(config: dict, endpoints: list[dict],
-                             max_probes: int = 40) -> list[dict]:
+                             max_probes: int = 150) -> list[dict]:
     """Ground LLM-proposed endpoints in the LIVE system.
 
     A candidate is kept only if the real target confirms the route exists:

@@ -35,22 +35,28 @@ You are given the identity of a live system (its product name, kind, connection
 string). Many well-known enterprise products expose a documented REST API even
 when they do not serve a machine-readable spec.
 
-Propose the REST endpoints this specific product most likely exposes, based on
-its real public API. For each: HTTP method, exact path (leading slash, real
-version prefix like /api/v1, /api/v4, /admin, {placeholders} for path params),
-a one-line purpose, and its query/path params and JSON body field names.
+Propose the REST endpoints this specific product exposes, based on its real
+public API. For each: HTTP method, exact path (leading slash, real version prefix
+like /api/v1, /api/v4, /admin, {placeholders} for path params), a one-line
+purpose, and its query/path params and JSON body field names.
 
 HARD RULES:
-- Propose ONLY endpoints you are confident are part of THIS product's real API.
-  It is far better to propose 8 correct endpoints than 20 with guesses — every
-  proposal will be probed against the live system and wrong ones are discarded,
-  but confident wrong guesses waste the budget.
-- Use the product's real path prefixes and parameter names, not invented ones.
-- Cover a useful spread: listing/search reads, single-item reads, and the few
-  most important writes (create/update). Skip auth/login/health/metrics/static.
-- Do NOT include destructive bulk deletes.
+- Be COMPREHENSIVE. Cover the FULL business surface: for EVERY business resource
+  the product manages (e.g. for an LLM API gateway: users, tokens, channels,
+  logs, redemptions/top-ups, groups, models, pricing/options, tasks...), propose
+  the complete CRUD set that exists — list, search, get-by-id, create, update,
+  delete, plus status/batch/action endpoints. A rich admin product commonly has
+  40-80 real endpoints; propose that many when they genuinely exist. Do not stop
+  at a handful.
+- Propose ONLY endpoints you are confident are part of THIS product's real API,
+  using its real path prefixes and parameter names. Every proposal is probed
+  against the live system and wrong ones are discarded — so breadth is rewarded,
+  but do not invent fantasy paths. When you know a resource exists but are unsure
+  of the exact sub-path, propose the most standard REST shape for it.
+- Skip only auth/login/logout/health/metrics/static/websocket endpoints.
+- Do NOT include destructive bulk/all deletes (single-item delete is fine).
 
-Return COMPACT JSON (≤ 20 endpoints, short strings):
+Return COMPACT JSON (short strings; as many endpoints as really exist, up to ~90):
 {"endpoints":[
   {"method":"GET","path":"/api/v1/...","summary":"≤10 words",
    "params":{"name":{"in":"query|path","required":true|false,"type":"string"}},
@@ -63,26 +69,49 @@ You are the capability-synthesis module of a self-adapting enterprise-integratio
 framework. You are given the REAL, verified endpoint catalogue of a live system
 (from its OpenAPI spec or probe-confirmed routes).
 
-Select the 6-12 most valuable operations to expose to a governed AI agent that
-serves business users of THIS system. For each, copy the endpoint's method and
-path EXACTLY from the catalogue (do not alter or invent paths), assign a stable
-snake-cased key `area.verb`, and write a short description IN THE SYSTEM'S OWN
-BUSINESS LANGUAGE for a non-technical domain expert (no HTTP/tech jargon).
+Select ALL business-meaningful operations to expose to a governed AI agent that
+serves business users of THIS system — aim for COMPREHENSIVE coverage, not a
+sample. For each, copy the endpoint's method and path EXACTLY from the catalogue
+(do not alter or invent paths), assign a stable snake-cased key `area.verb`, and
+write a short description IN THE SYSTEM'S OWN BUSINESS LANGUAGE for a
+non-technical domain expert (no HTTP/tech jargon).
 
 HARD RULES:
+- Be COMPREHENSIVE. For EVERY business resource in the catalogue, include its
+  FULL CRUD set that exists: list, search, get-by-id/detail, create, update,
+  delete, plus status/action/batch endpoints. Do NOT stop at 6-12 — a rich
+  system may warrant 40-80 operations. Include everything a business user could
+  legitimately need to do; only skip auth/login/logout/health/metrics/static/
+  internal/websocket endpoints.
+- Include BOTH reads AND writes generously (create/update/delete). A read-only
+  selection is INCOMPLETE — governed writes are the whole point. Never select a
+  destructive bulk/all-delete; single-item delete is fine.
 - ONLY use endpoints present in the catalogue, verbatim method+path.
-- You MUST include a balanced mix: business-meaningful reads (lists, search,
-  detail) AND at least 2-4 safe write operations (create/update — e.g. create an
-  item, add a record, update a field) when the catalogue contains any POST/PUT/
-  PATCH endpoints. A read-only selection is INCOMPLETE — governed writes are the
-  whole point. Never pick destructive bulk deletes.
-- Skip auth/login/health/metrics/static/internal endpoints.
 - Descriptions describe the business outcome ("查看所有订阅者", not "GET /subscribers").
 
 Return COMPACT JSON (≤ 4 entities/≤6 fields, ≤4 rules, ≤3 chains, desc ≤15 words):
 {"entities":[{"name":"..","fields":[".."]}],
  "operations":[{"key":"area.verb","desc":"业务语言描述","method":"GET","path":"/api/.."}],
  "rules":["business rule"], "chains":["likely multi-step chain"]}"""
+
+# ── Mode B2: NAME a batch of real endpoints (comprehensive coverage) ────────────
+NAME_ENDPOINTS = """\
+You are the capability-synthesis module of a self-adapting enterprise-integration
+framework. You are given a batch of REAL, verified endpoints of a live system.
+
+Produce ONE operation for EVERY endpoint in the batch (comprehensive coverage —
+do not drop any except pure auth/login/logout/health/metrics/static/websocket
+endpoints). For each: copy method and path EXACTLY, assign a stable snake-cased
+key `area.verb` (e.g. repo.search, token.create, user.update), and write a short
+description IN THE SYSTEM'S OWN BUSINESS LANGUAGE for a non-technical domain
+expert — Chinese if the system serves Chinese users (no HTTP/tech jargon; say the
+business outcome, e.g. "创建一个新的访问令牌", not "POST /tokens").
+
+Keys must be UNIQUE within the batch; if two endpoints map to the same area.verb,
+disambiguate (e.g. repo.get vs repo.get_by_name).
+
+Return COMPACT JSON, one entry per endpoint:
+{"operations":[{"key":"area.verb","desc":"业务语言描述","method":"GET","path":"/api/.."}]}"""
 
 # ── Mode C: metadata-only (no reachable API) ────────────────────────────────────
 DESCRIBE_METADATA = """\

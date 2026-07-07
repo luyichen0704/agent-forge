@@ -30,10 +30,22 @@ from app.models.sources import (
 )
 from app.services import targets
 from app.services.exploration_prompts import (
-    DESCRIBE_METADATA, PROMPT_VERSION, PROPOSE_ENDPOINTS, SELECT_FROM_SPEC,
+    DESCRIBE_METADATA, NAME_ENDPOINTS, PROMPT_VERSION, PROPOSE_ENDPOINTS,
 )
+from app.config import settings
 from app.services.llm import explorer_llm, explorer_model
 from app.services.llm_config import resolve as resolve_profile
+
+# endpoints that are not business operations — never name/register these
+_JUNK_RE = re.compile(
+    r"/(auth|login|logout|oauth|token/refresh|session|health|healthz|livez|readyz|"
+    r"ping|metrics|version|swagger|openapi|api-docs|\.well-known|favicon|static|"
+    r"assets|robots\.txt|ws|websocket|socket\.io)(/|$|\.)", re.I)
+
+
+def _is_junk_endpoint(e: dict) -> bool:
+    path = (e.get("path") or "").lower()
+    return bool(_JUNK_RE.search(path))
 
 
 async def _emit(db, job_id: uuid.UUID, event_type: str, payload: dict) -> None:
@@ -95,29 +107,55 @@ async def _discover_endpoints(db, job_id, source, cfg, prof) -> tuple[list[dict]
         endpoints = targets.summarize_endpoints(spec)
         mode = "openapi"
     else:
-        # no machine-readable spec → LLM proposes, then we verify against reality
-        p_args = (explorer_model(prof.model), PROPOSE_ENDPOINTS,
-                  f"System name: {source.name}\nKind: {source.type}\n"
-                  f"Connector: {source.connector_kind}\nConnection: {source.conn}\n"
-                  f"Base URL: {cfg.get('base_url')}")
-        proposed = []
+        # no machine-readable spec → LLM proposes, then we verify against reality.
+        # MULTI-PASS: complex systems have far more endpoints than one call yields,
+        # so propose repeatedly, each pass excluding what's already found, until a
+        # pass adds nothing new (or a cap). Breadth is the goal — probing discards
+        # any wrong guess, so more passes = more real coverage.
+        base_prompt = (f"System name: {source.name}\nKind: {source.type}\n"
+                       f"Connector: {source.connector_kind}\nConnection: {source.conn}\n"
+                       f"Base URL: {cfg.get('base_url')}")
+        # each pass targets a DIFFERENT facet of the API, then we dedup across all
+        # passes and finish with a gap-filling pass — a multi-angle sweep so no
+        # resource/action is missed.
+        ASPECTS = [
+            "Focus on READ endpoints: list / search / get-by-id / detail / stats "
+            "for EVERY business resource the product manages.",
+            "Focus on WRITE endpoints: create / update / delete / status-change / "
+            "batch / action endpoints for EVERY business resource.",
+            "Focus on ADMIN / configuration / settings / options / pricing / "
+            "grouping / import-export and any less-common secondary resources.",
+            "GAP-FILL: given everything already found, add every remaining endpoint "
+            "you are confident exists — complete the missing CRUD verbs per resource.",
+        ]
+        by_key: dict = {}
         prop_err = None
-        for _try in range(2):
+        for _pass, aspect in enumerate(ASPECTS):
+            extra = f"\n\nTHIS PASS — {aspect}"
+            if by_key:
+                already = ", ".join(sorted(f"{m} {p}" for (m, p) in list(by_key)[:200]))
+                extra += ("\n\nAlready found (do NOT repeat; propose DIFFERENT, additional "
+                          f"real endpoints):\n{already}")
             try:
-                # generous budget: the explorer model may be a reasoning model
-                # that spends tokens before emitting the JSON answer
-                proposal, _ = await explorer_llm.structured(*p_args, temperature=prof.temperature)
-                proposed = targets.normalize_manual(proposal.get("endpoints") or [])
-                prop_err = None
-                break
-            except Exception as exc:  # noqa: BLE001 — proposal failure is not fatal
-                proposed = []
+                proposal, _ = await explorer_llm.structured(
+                    explorer_model(prof.model), PROPOSE_ENDPOINTS, base_prompt + extra,
+                    temperature=prof.temperature)
+                new = targets.normalize_manual(proposal.get("endpoints") or [])
+            except Exception as exc:  # noqa: BLE001 — a failed pass is not fatal
                 prop_err = f"{type(exc).__name__}: {exc}"
-        if prop_err:
+                new = []
+            added = 0
+            for e in new:
+                k = (e["method"], e["path"])
+                if k not in by_key:
+                    by_key[k] = e; added += 1
+            await _emit(db, job_id, "propose", {"pass": _pass + 1, "aspect": aspect[:24],
+                                                "added": added, "total": len(by_key)})
+            await db.commit()
+        if prop_err and not by_key:
             await _emit(db, job_id, "warn", {"stage": "propose", "error": prop_err[:200]})
             await db.commit()
-        await _emit(db, job_id, "propose", {"proposed": len(proposed)})
-        await db.commit()
+        proposed = list(by_key.values())
         verified = await targets.validate_endpoints(cfg, proposed) if proposed else []
         await _emit(db, job_id, "verify", {"proposed": len(proposed), "verified": len(verified)})
         await db.commit()
@@ -181,26 +219,49 @@ async def run_exploration(job_id: uuid.UUID) -> None:
             })
             await db.commit()
 
-        # ---- phase 3: 操作生成 — LLM curates business ops (any failure must not leave job 'running') ----
+        # ---- phase 3: 操作生成 — name EVERY real endpoint, comprehensively ----
+        # Complex systems have hundreds of endpoints; a single LLM call can't name
+        # them all. Chunk the verified endpoints and name the batches CONCURRENTLY
+        # (bounded by the LLM client's semaphore) — like a PM fanning out to many
+        # workers — so coverage scales to full-CRUD across every resource.
+        job.phase, job.progress = 3, 70
+        emodel = explorer_model(prof.model)
         try:
-            emodel = explorer_model(prof.model)
             if endpoints:
-                args = (emodel, SELECT_FROM_SPEC,
-                        f"System: {source.name} ({source.conn})\n"
-                        f"Verified endpoint catalogue ({len(endpoints)} real endpoints):\n"
-                        + targets.endpoint_digest(endpoints))
-                kw = {"temperature": prof.temperature}
-            else:
-                args = (emodel, DESCRIBE_METADATA,
-                        f"Source type: {source.type}\nConnector: {source.connector_kind}\n"
-                        f"Connection: {source.conn}\nName: {source.name}")
-                kw = {"temperature": prof.temperature}
-            try:
-                data, _ = await explorer_llm.structured(*args, **kw)
-            except Exception:  # noqa: BLE001 — one retry for transient gateway/JSON issues
-                await _emit(db, job_id, "retry", {"stage": "extract"})
+                biz = [e for e in endpoints if not _is_junk_endpoint(e)]
+                CHUNK = 40
+                batches = [biz[i:i + CHUNK] for i in range(0, len(biz), CHUNK)]
+
+                # naming is a mechanical task (assign key+desc to REAL endpoints) —
+                # use the fast DeepSeek model so hundreds of endpoints stay tractable;
+                # the harder recall (propose) already used the stronger model.
+                name_model = settings.qllm_model or emodel
+
+                async def _name_batch(batch: list[dict]) -> list[dict]:
+                    user = (f"System: {source.name} ({source.conn})\n"
+                            f"Endpoints to name ({len(batch)}):\n"
+                            + targets.endpoint_digest(batch, max_chars=24000))
+                    for _try in range(2):
+                        try:
+                            d, _ = await explorer_llm.structured(name_model, NAME_ENDPOINTS, user,
+                                                                 temperature=prof.temperature)
+                            return d.get("operations", [])
+                        except Exception:  # noqa: BLE001 — retry the batch once
+                            continue
+                    return []
+
+                results = await asyncio.gather(*[_name_batch(b) for b in batches])
+                ops_list = [op for r in results for op in r]
+                await _emit(db, job_id, "name", {"batches": len(batches),
+                                                 "endpoints": len(biz), "named": len(ops_list)})
                 await db.commit()
-                data, _ = await explorer_llm.structured(*args, **kw)
+            else:
+                d, _ = await explorer_llm.structured(
+                    emodel, DESCRIBE_METADATA,
+                    f"Source type: {source.type}\nConnector: {source.connector_kind}\n"
+                    f"Connection: {source.conn}\nName: {source.name}",
+                    temperature=prof.temperature)
+                ops_list = d.get("operations", [])
         except Exception as exc:  # noqa: BLE001 — surface any error to the job
             await _emit(db, job_id, "error", {"error": f"{type(exc).__name__}: {exc}"})
             job.status = "error"
@@ -208,12 +269,10 @@ async def run_exploration(job_id: uuid.UUID) -> None:
             await db.commit()
             return
 
-        job.phase = 3
-        job.progress = 70
         by_binding = {(e["method"], e["path"]): e for e in endpoints}
         slug = _source_slug(source)
         registered = 0
-        for op in data.get("operations", [])[:10]:
+        for op in ops_list[:800]:
             raw_key = str(op.get("key", "")).strip()
             if not raw_key:
                 continue
@@ -254,7 +313,7 @@ async def run_exploration(job_id: uuid.UUID) -> None:
                                       executor=executor, binding=binding, input_schema=input_schema)
             registered += 1
             await db.commit()
-            await asyncio.sleep(0.15)
+            await asyncio.sleep(0.03)
 
         for rule in data.get("rules", [])[:4]:
             await _emit(db, job_id, "rule", {"text": rule})
