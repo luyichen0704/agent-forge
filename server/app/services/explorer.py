@@ -272,6 +272,7 @@ async def run_exploration(job_id: uuid.UUID) -> None:
         by_binding = {(e["method"], e["path"]): e for e in endpoints}
         slug = _source_slug(source)
         registered = 0
+        seen_ep: set = set()          # one op per real endpoint (naming batches can overlap)
         for op in ops_list[:800]:
             raw_key = str(op.get("key", "")).strip()
             if not raw_key:
@@ -287,6 +288,10 @@ async def run_exploration(job_id: uuid.UUID) -> None:
                         "method": op.get("method"), "path": op.get("path"),
                     })
                     continue
+                ep_id = (ep["method"], ep["path"])
+                if ep_id in seen_ep:
+                    continue          # already registered this endpoint from another batch
+                seen_ep.add(ep_id)
                 kind = _infer_kind(ep["method"], raw_key, op.get("desc", ""),
                                    ep.get("path", ""), ep.get("summary", ""))
                 binding = {
@@ -314,10 +319,6 @@ async def run_exploration(job_id: uuid.UUID) -> None:
             registered += 1
             await db.commit()
             await asyncio.sleep(0.03)
-
-        for rule in data.get("rules", [])[:4]:
-            await _emit(db, job_id, "rule", {"text": rule})
-        await db.commit()
 
         # ---- phase 4: 能力标注 ----
         job.phase = 4

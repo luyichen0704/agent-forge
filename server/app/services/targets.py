@@ -236,7 +236,7 @@ def _spec_base_path(spec: dict) -> str:
     return base if base and base != "/" else ""
 
 
-def summarize_endpoints(spec: dict, limit: int = 400) -> list[dict]:
+def summarize_endpoints(spec: dict, limit: int = 1000) -> list[dict]:
     """Flatten an OpenAPI 2/3 spec (or WordPress /wp-json route map) into
     [{method, path, summary, tag, params, body_fields}]."""
     out: list[dict] = []

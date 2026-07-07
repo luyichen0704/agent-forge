@@ -15,11 +15,11 @@ class Settings(BaseSettings):
     sync_database_url: str = "postgresql+psycopg://agentforge:agentforge@localhost:5544/agentforge"
     redis_url: str = "redis://localhost:6390/0"
 
-    # OpenAI-compatible LLM gateway (camel-hub) — chat planning (P-LLM) + Q-LLM
-    llm_base_url: str = "https://api.camel-hub.com/v1"
+    # OpenAI-compatible LLM gateway — chat planning (P-LLM) + Q-LLM (DeepSeek)
+    llm_base_url: str = "https://api.deepseek.com"
     llm_api_key: str = ""
-    pllm_model: str = "claude-sonnet-4-5"
-    qllm_model: str = "claude-haiku-4-5"
+    pllm_model: str = "deepseek-v4-pro"
+    qllm_model: str = "deepseek-v4-flash"
 
     # Dedicated LLM for the Explorer engine (auto-adaptation: propose endpoints +
     # select operations). Separate provider/key/model from planning by design.
