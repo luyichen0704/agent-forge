@@ -299,7 +299,9 @@ class APIExecutor(Executor):
             error_code = f"http_{resp.status_code}"
         else:
             body_err = api_body_error(payload)
-            error_code = f"api_error:{body_err}" if body_err else None
+            # error_code is stored in a String(60) column — cap it so a long
+            # upstream message can never overflow the DB and break honest failure.
+            error_code = f"api_error:{body_err}"[:60] if body_err else None
         result = ExecutorResult(
             before_state={},
             after_state={"http_status": resp.status_code, "method": method, "path": path,

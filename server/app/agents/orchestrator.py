@@ -256,9 +256,11 @@ async def confirm_plan(db: AsyncSession, plan: ExecutionPlan, *, approver: Ident
     except Exception as exc:  # noqa: BLE001 — a broken plan shape must fail
         # gracefully (honest failure), never surface a raw 500. Mark the plan
         # failed, record the reason, and let the caller show a plain-language error.
+        plan_id = plan.id
         await db.rollback()
-        plan = (await db.execute(
-            select(ExecutionPlan).where(ExecutionPlan.id == plan.id).with_for_update())).scalar_one()
+        with db.no_autoflush:  # don't re-flush the failed state during the re-query
+            plan = (await db.execute(
+                select(ExecutionPlan).where(ExecutionPlan.id == plan_id).with_for_update())).scalar_one()
         plan.status = "failed"
         trace = await db.get(Trace, plan.trace_id)
         if trace:
@@ -415,7 +417,8 @@ async def _execute_plan(db: AsyncSession, plan: ExecutionPlan, trace: Trace, ste
                 trace_id=plan.trace_id, plan_step_id=st.id, op_key=st.op_key,
                 executor=ex.name, status="error" if res.error_code else "ok",
                 before_state=res.before_state, after_state=res.after_state,
-                idempotency_key=idem, latency_ms=latency, error_code=res.error_code,
+                idempotency_key=idem, latency_ms=latency,
+                error_code=(res.error_code or "")[:60] or None,  # column is String(60)
             ))
             st.status = "done" if not res.error_code else "error"
             await audit.append_event(db, plan.trace_id, "OPERATION_EXECUTED",

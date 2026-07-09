@@ -272,7 +272,18 @@ async def run_exploration(job_id: uuid.UUID) -> None:
         by_binding = {(e["method"], e["path"]): e for e in endpoints}
         slug = _source_slug(source)
         registered = 0
-        seen_ep: set = set()          # one op per real endpoint (naming batches can overlap)
+        # re-exploration convergence: an endpoint already registered for THIS source
+        # (possibly under a different op_key from an earlier run) is not registered
+        # again — so re-exploring is idempotent instead of accumulating semantic
+        # duplicates of the same (method, path).
+        existing_ops = (
+            await db.execute(select(Operation).where(Operation.source_id == source.id))
+        ).scalars().all()
+        seen_ep: set = set()
+        for eo in existing_ops:
+            b = eo.binding_json or {}
+            if b.get("method") and b.get("path"):
+                seen_ep.add((b["method"], b["path"]))
         for op in ops_list[:800]:
             raw_key = str(op.get("key", "")).strip()
             if not raw_key:
