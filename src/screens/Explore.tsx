@@ -15,9 +15,11 @@ const iconBox: React.CSSProperties = {
 };
 const SRC_ICON: Record<string, string> = { code: 'code', db: 'db', api: 'globe', admin: 'table', doc: 'doc' };
 
+// Theme-aware categorical palette — resolves to lighter hues in dark mode
+// (tokens defined in index.css). Kept in sync with viz.tsx consumers.
 const BAR_PALETTE = [
-  '#4f46e5', '#2563eb', '#0e9f6e', '#b5820b', '#d9620d',
-  '#7c3aed', '#0891b2', '#059669', '#c2410c', '#9333ea',
+  'var(--viz-1)', 'var(--viz-2)', 'var(--viz-3)', 'var(--viz-4)', 'var(--viz-5)',
+  'var(--viz-6)', 'var(--viz-7)', 'var(--viz-8)', 'var(--viz-9)', 'var(--viz-10)',
 ];
 
 /* 总览：各系统操作数、读/写分布、真实接口绑定占比 —— 全部来自真实 /operations。 */
@@ -62,7 +64,7 @@ function OverviewPanel() {
       </div>
 
       <div className="stat-grid">
-        <StatTile label="已接入系统" value={<span className="tnum">{srcCount}</span>} sub="企业数据源" accent="var(--accent)" icon={<Icon n="grid" s={15} c="var(--ink-4)" />} />
+        <StatTile label="已接入系统" value={<span className="tnum">{srcCount}</span>} sub="企业数据源" accent="var(--accent-ink)" icon={<Icon n="grid" s={15} c="var(--ink-4)" />} />
         <StatTile label="可用操作" value={<span className="tnum">{fmtInt(stats.total)}</span>} sub="自动发现" accent="var(--cap-data)" icon={<Icon n="bolt" s={15} c="var(--ink-4)" />} />
         <StatTile label="已上线（查询）" value={<span className="tnum">{fmtInt(stats.active)}</span>} sub="可直接调用" accent="var(--cap-trusted)" icon={<Icon n="check" s={15} c="var(--ink-4)" />} />
         <StatTile label="待审核（写操作）" value={<span className="tnum">{fmtInt(stats.pending)}</span>} sub="需人工上线" accent="var(--cap-write)" icon={<Icon n="refresh" s={15} c="var(--ink-4)" />} />

@@ -5,8 +5,11 @@ import './index.css';
 import App from './App';
 import { queryClient } from './api/queryClient';
 import { AppProvider } from './lib/appContext';
+import { initTheme } from './lib/theme';
 
 async function bootstrap() {
+  initTheme();
+
   if (import.meta.env.VITE_DEMO === '1') {
     const { installDemo } = await import('./demo/install');
     installDemo();

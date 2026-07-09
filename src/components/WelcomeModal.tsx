@@ -76,7 +76,7 @@ export function WelcomeModal({ onClose }: WelcomeModalProps) {
               {WORKFLOW_STEPS.map((label, i) => (
                 <Fragment key={label}>
                   <div className="tw-step-pill">
-                    <span style={{ color: 'var(--accent)', fontWeight: 700, fontSize: 13 }}>
+                    <span style={{ color: 'var(--accent-ink)', fontWeight: 700, fontSize: 13 }}>
                       {STEP_BADGES[(i + 1) as 1 | 2 | 3]}
                     </span>
                     {label}

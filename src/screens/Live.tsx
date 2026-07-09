@@ -116,7 +116,7 @@ export function LiveMain() {
       {/* live discovery stats */}
       <div className="stat-grid">
         <StatTile label="当前阶段" value={<span className="tnum">{Math.min(Math.max(phase, jobId ? 1 : 0), 4)}<span className="muted" style={{ fontSize: 13 }}> / 4</span></span>}
-          sub={jobId ? PHASES[Math.min(Math.max(phase - 1, 0), 3)] : '尚未开始'} accent="var(--accent)" icon={<Icon n="layers" s={15} c="var(--ink-4)" />} />
+          sub={jobId ? PHASES[Math.min(Math.max(phase - 1, 0), 3)] : '尚未开始'} accent="var(--accent-ink)" icon={<Icon n="layers" s={15} c="var(--ink-4)" />} />
         <StatTile label="已发现操作" value={<span className="tnum">{fmtInt(discovered)}</span>}
           sub={running ? '探索进行中…' : doneEv ? '本次探索完成' : '等待开始'} accent="var(--cap-data)" icon={<Icon n="bolt" s={15} c="var(--ink-4)" />} />
         <StatTile label="业务规则" value={<span className="tnum">{fmtInt(ruleCount)}</span>}
@@ -153,7 +153,7 @@ export function LiveMain() {
                 <Dot k={st === 'done' ? 'ok' : st === 'now' ? 'wait' : 'off'} />
                 <span className="b">阶段 {phaseNum}</span><span className="fill">{label}</span>
                 {st === 'done' && <Icon n="check" s={13} c="var(--cap-trusted)" />}
-                {st === 'now' && <span className="xs" style={{ color: 'var(--accent)' }}>进行中</span>}
+                {st === 'now' && <span className="xs" style={{ color: 'var(--accent-ink)' }}>进行中</span>}
               </div>
             );
           })}

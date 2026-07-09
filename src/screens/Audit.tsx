@@ -36,10 +36,10 @@ export function AuditMain() {
       {/* integrity banner */}
       <div className={`audit-banner ${ok ? 'ok' : 'bad'}`}>
         <span className="ab-mark">
-          <Icon n={ok ? 'shield' : 'x'} s={20} c="#fff" />
+          <Icon n={ok ? 'shield' : 'x'} s={20} c="var(--on-cap)" />
         </span>
         <div className="col fill" style={{ gap: 2 }}>
-          <span className="b" style={{ fontSize: 13, color: ok ? '#0a7a53' : 'var(--danger)' }}>
+          <span className="b" style={{ fontSize: 13, color: ok ? 'var(--cap-trusted-ink)' : 'var(--danger-ink)' }}>
             {ok ? '完整性已验证' : `记录在第 ${v.broken_at_seq} 环被篡改`}
           </span>
           <span className="xs muted">
