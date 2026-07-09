@@ -132,8 +132,9 @@ class Executor(ABC):
                       kwargs: dict[str, Any]) -> ExecutorResult: ...
 
     async def read(self, db: AsyncSession, tenant_id: uuid.UUID, op_key: str,
-                   kwargs: dict[str, Any]) -> list[dict]:
-        """Query-step data fetch (no side effects). Default: nothing."""
+                   kwargs: dict[str, Any], meta_out: dict | None = None) -> list[dict]:
+        """Query-step data fetch (no side effects). Default: nothing.
+        meta_out (optional) may receive pagination info like {'total': N}."""
         return []
 
     async def rollback(self, db: AsyncSession, before_state: dict, after_state: dict) -> dict:
@@ -156,7 +157,7 @@ class FunctionExecutor(Executor):
     """Runs registered Python handlers against the real biz_records store."""
     name = "FunctionExecutor"
 
-    async def read(self, db, tenant_id, op_key, kwargs):
+    async def read(self, db, tenant_id, op_key, kwargs, meta_out=None):
         # owner scoping: when policy injected a user_id (customer self-scope), filter to it
         owner = kwargs.get("user_id")
         kind = {"customer.query": "customer", "order.query": "order",
@@ -316,11 +317,19 @@ class APIExecutor(Executor):
         )
         return payload, result
 
-    async def read(self, db, tenant_id, op_key, kwargs):
+    async def read(self, db, tenant_id, op_key, kwargs, meta_out=None):
         payload, result = await self._call(db, tenant_id, op_key, kwargs)
         if result.error_code or payload is None:
             return [{"error": result.error_code}] if result.error_code else []
-        return _rows(payload)
+        rows = _rows(payload)
+        # surface the paginated grand-total so "how many" answers aren't the page size
+        if meta_out is not None and isinstance(payload, dict):
+            for tk in ("total", "count", "total_count", "totalCount", "totalItems"):
+                v = payload.get(tk)
+                if isinstance(v, int) and v > len(rows):
+                    meta_out["total"] = v
+                    break
+        return rows
 
     async def execute(self, db, tenant_id, op_key, kwargs):
         _, result = await self._call(db, tenant_id, op_key, kwargs)
@@ -338,8 +347,8 @@ class SQLExecutor(Executor):
     async def execute(self, db, tenant_id, op_key, kwargs):
         return await FunctionExecutor().execute(db, tenant_id, op_key, kwargs)
 
-    async def read(self, db, tenant_id, op_key, kwargs):
-        return await FunctionExecutor().read(db, tenant_id, op_key, kwargs)
+    async def read(self, db, tenant_id, op_key, kwargs, meta_out=None):
+        return await FunctionExecutor().read(db, tenant_id, op_key, kwargs, meta_out)
 
 
 class RPAExecutor(Executor):

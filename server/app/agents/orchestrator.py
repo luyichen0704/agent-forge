@@ -360,12 +360,16 @@ async def _execute_plan(db: AsyncSession, plan: ExecutionPlan, trace: Trace, ste
     selected: list[str] = []     # Q-LLM parsed selection (capability: parsed)
     step_rows: dict[int, list[dict]] = {}   # per-step query output, for $stepN refs
     query_errors: list[str] = []            # error codes from failed reads (for honest replies)
+    total_hint: int | None = None           # paginated grand-total (for "how many" answers)
 
     for st in steps:
         if st.kind == "query" and st.op_key:
             ex = await _op_executor(db, trace.tenant_id, st.op_key)
+            meta: dict = {}
             fetched = await ex.read(db, trace.tenant_id, st.op_key,
-                                    _resolve_refs(dict(st.input_refs_json or {}), step_rows))
+                                    _resolve_refs(dict(st.input_refs_json or {}), step_rows), meta)
+            if meta.get("total") is not None:
+                total_hint = meta["total"]
             # distinguish real rows from an executor error envelope ([{'error':..}])
             err = fetched[0].get("error") if (len(fetched) == 1 and isinstance(fetched[0], dict)
                                               and set(fetched[0]) == {"error"}) else None
@@ -427,4 +431,5 @@ async def _execute_plan(db: AsyncSession, plan: ExecutionPlan, trace: Trace, ste
         else:
             st.status = "done"
 
-    return {"rows": rows, "selected": selected, "query_errors": query_errors}
+    return {"rows": rows, "selected": selected, "query_errors": query_errors,
+            "total_hint": total_hint}

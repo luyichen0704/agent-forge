@@ -152,8 +152,12 @@ def _result_reply(plan) -> str:
     writes = [s for s in steps if s["kind"] == "write"]
     if queries:
         real_rows = [r for r in rows if not (isinstance(r, dict) and set(r) == {"error"})]
+        total = ctx.get("total_hint")
         if real_rows:
-            lines.append(f"查询完成，共找到 {len(real_rows)} 条数据，例如：")
+            if isinstance(total, int) and total > len(real_rows):
+                lines.append(f"查询完成，共 {total} 条数据（本页显示 {len(real_rows)} 条），例如：")
+            else:
+                lines.append(f"查询完成，共找到 {len(real_rows)} 条数据，例如：")
             lines += [f"· {_human_row(r)}" for r in real_rows[:3]]
             if len(real_rows) > 3:
                 lines.append(f"（其余 {len(real_rows) - 3} 条可在「数据流」页查看）")
