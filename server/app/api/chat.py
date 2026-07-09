@@ -13,6 +13,7 @@ from app.agents import orchestrator
 from app.db import get_db
 from app.deps import Principal, get_principal
 from app.models.chat import PlanStep
+from app.models.sources import DataSource
 
 # write-intent verbs — a request naming one of these expects a create/change
 _WRITE_INTENT = ("新建", "创建", "建一个", "建个", "添加", "新增", "增加", "修改", "更新",
@@ -52,7 +53,19 @@ async def list_sessions(p: Principal = Depends(get_principal), db: AsyncSession 
             .order_by(ChatSession.created_at.desc())
         )
     ).scalars().all()
-    return {"items": [{"id": str(s.id), "title": s.title} for s in rows]}
+    # resolve bound-system names so the UI switcher shows the real scope
+    src_ids = {s.source_id for s in rows if s.source_id}
+    names: dict = {}
+    if src_ids:
+        srows = (await db.execute(
+            select(DataSource.id, DataSource.name).where(DataSource.id.in_(src_ids)))).all()
+        names = {sid: name for sid, name in srows}
+    return {"items": [{
+        "id": str(s.id), "title": s.title,
+        "source_id": str(s.source_id) if s.source_id else None,
+        "source_name": names.get(s.source_id),
+        "created_at": s.created_at.isoformat() if s.created_at else None,
+    } for s in rows]}
 
 
 class SessionIn(BaseModel):

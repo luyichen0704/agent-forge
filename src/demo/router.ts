@@ -336,7 +336,7 @@ route('POST', /^\/plans\/([^/]+)\/confirm$/, async (state, _m, path) => {
   // Scenario A
   Object.assign(plan, buildScenarioADonePlan(planId, traceId));
   // Materialize trace A
-  materializeTraceA(state, traceId);
+  materializeTraceA(state, traceId, getCurrentUser(state));
   return { ...plan };
 });
 
@@ -472,14 +472,18 @@ function getTrace(state: DemoState, id: string) {
   return tr;
 }
 
-function materializeTraceA(state: DemoState, traceId: string) {
+function materializeTraceA(
+  state: DemoState,
+  traceId: string,
+  actor: { display_name: string; role: string },
+) {
   const now = new Date();
   const eventDefs = [
-    { event: 'REQUEST_RECEIVED', cap: 'data' as const, payload: { role: 'employee', instruction: '张伟退款加急' } },
+    { event: 'REQUEST_RECEIVED', cap: 'data' as const, payload: { role: actor.role, instruction: '张伟退款加急' } },
     { event: 'PLAN_GENERATED', cap: 'data' as const, payload: { steps: 4 } },
     { event: 'POLICY_EVALUATED', cap: 'trusted' as const, payload: { op: 'refund.expedite', decision: 'allow' } },
     { event: 'CONFIRMATION_REQUESTED', cap: 'parsed' as const, payload: { level: 'confirm', writes: 1 } },
-    { event: 'USER_CONFIRMED', cap: 'trusted' as const, payload: { approver: '员工小卫' } },
+    { event: 'USER_CONFIRMED', cap: 'trusted' as const, payload: { approver: actor.display_name } },
     { event: 'OPERATION_EXECUTED', cap: 'write' as const, payload: { op: 'refund.expedite', latency_ms: 158 } },
     { event: 'DATAFLOW_SNAPSHOT', cap: 'data' as const, payload: { nodes: 5, edges: 4 } },
     { event: 'RESPONSE_SENT', cap: 'data' as const, payload: { tokens: 1150 } },
@@ -527,7 +531,7 @@ function materializeTraceA(state: DemoState, traceId: string) {
       id: traceId,
       title: '张伟退款加急处理',
       status: 'done',
-      acting_role: 'employee',
+      acting_role: actor.role,
       created_at: now.toISOString(),
     },
     flowNodes,

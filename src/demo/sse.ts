@@ -92,7 +92,7 @@ export class DemoEventSource {
       job.status = 'done';
       job.progress = 100;
     }
-    this._emit('done', { total_ops: 3, total_rules: 4 });
+    this._emit('done', { operations: 5, total_rules: 4 });
     this.close();
   }
 }

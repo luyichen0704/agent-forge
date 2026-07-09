@@ -344,3 +344,42 @@ describe('llm profiles', () => {
     expect(res.models.length).toBeGreaterThan(0);
   });
 });
+
+// ────────────────────────────────────────────────
+// Hash chain quality (regression: first block was always 00000000)
+// ────────────────────────────────────────────────
+
+describe('audit hash chain', () => {
+  it('produces non-zero, distinct, linked hashes', async () => {
+    await dispatchDemo(state, 'POST', '/auth/login', { role: 'admin' });
+    const { id: sessId } = await dispatchDemo(state, 'POST', '/chat/sessions', undefined) as { id: string };
+    const { plan } = await dispatchDemo(state, 'POST', `/chat/sessions/${sessId}/messages`, { content: '退款加急' }) as { plan: Plan };
+    await dispatchDemo(state, 'POST', `/plans/${plan.id}/confirm`, undefined);
+    const traces = await dispatchDemo(state, 'GET', '/traces', undefined) as { items: Array<{ id: string }> };
+    const audit = await dispatchDemo(state, 'GET', `/traces/${traces.items[0].id}/audit`, undefined) as {
+      events: Array<{ hash: string; prev_hash: string }>;
+    };
+    expect(audit.events.length).toBeGreaterThan(0);
+    for (let i = 0; i < audit.events.length; i++) {
+      const ev = audit.events[i];
+      expect(ev.hash.slice(0, 8)).not.toBe('00000000');
+      expect(ev.hash).toMatch(/^[0-9a-f]{64}$/);
+      if (i > 0) expect(ev.prev_hash).toBe(audit.events[i - 1].hash);
+    }
+    const unique = new Set(audit.events.map(e => e.hash));
+    expect(unique.size).toBe(audit.events.length);
+  });
+
+  it('hash blocks do not share a trailing-zero pattern (float precision regression)', async () => {
+    await dispatchDemo(state, 'POST', '/auth/login', { role: 'admin' });
+    const { id: sessId } = await dispatchDemo(state, 'POST', '/chat/sessions', undefined) as { id: string };
+    const { plan } = await dispatchDemo(state, 'POST', `/chat/sessions/${sessId}/messages`, { content: '退款加急' }) as { plan: Plan };
+    await dispatchDemo(state, 'POST', `/plans/${plan.id}/confirm`, undefined);
+    const traces = await dispatchDemo(state, 'GET', '/traces', undefined) as { items: Array<{ id: string }> };
+    const audit = await dispatchDemo(state, 'GET', `/traces/${traces.items[0].id}/audit`, undefined) as {
+      events: Array<{ hash: string }>;
+    };
+    const allEndZero = audit.events.every(e => e.hash.slice(6, 8) === '00');
+    expect(allEndZero).toBe(false);
+  });
+});

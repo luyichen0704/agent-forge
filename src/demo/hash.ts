@@ -5,14 +5,16 @@ function fakeHash(input: string): string {
   let h = 0x811c9dc5;
   for (let i = 0; i < input.length; i++) {
     h ^= input.charCodeAt(i);
-    h = (h * 0x01000193) >>> 0;
+    h = Math.imul(h, 0x01000193) >>> 0;
   }
-  // Expand to 64 hex chars by repeating and mixing
-  const base = h.toString(16).padStart(8, '0');
+  // Expand to 64 hex chars by remixing each round. (A self-XOR like
+  // h ^ (h >> 0) zeroes the first block, which the audit UI displays.)
   let result = '';
+  let x = h;
   for (let i = 0; i < 8; i++) {
-    const shifted = ((h ^ (h >> (i * 3))) >>> 0).toString(16).padStart(8, '0');
-    result += shifted;
+    x = (x ^ (x >>> 13)) >>> 0;
+    x = (Math.imul(x, 0x5bd1e995) + i) >>> 0;
+    result += x.toString(16).padStart(8, '0');
   }
   return result.substring(0, 64);
 }

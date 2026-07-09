@@ -168,7 +168,7 @@ export const TOUR_STEPS: TourStep[] = [
   {
     id: 'tour-done',
     target: 'body',
-    title: '教程完成 🎉',
+    title: '教程完成',
     body: '你已走完完整的业务流程！需要再看一遍，点左下角 ? 按钮随时重开。左下角齿轮菜单也可以重开总览或退出登录。',
     advance: 'next',
     placement: 'center',
