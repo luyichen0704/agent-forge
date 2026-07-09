@@ -63,6 +63,38 @@ Return COMPACT JSON (short strings; as many endpoints as really exist, up to ~90
    "body_fields":["field1","field2"]}
 ]}"""
 
+# ── Mode: extract endpoints from the system's own SOURCE CODE (route defs) ──────
+EXTRACT_ROUTES = """\
+You are the discovery module of a self-adapting enterprise-integration framework.
+You are given excerpts of the TARGET SYSTEM'S OWN SOURCE CODE — the files that
+register its HTTP routes (Gin/Echo, Express/Koa, Laravel, Django/FastAPI/Flask,
+Rails, Spring, …). This is GROUND TRUTH: extract the real endpoints, do not guess.
+
+Extract EVERY HTTP route defined in the code. For each: HTTP method, and the FULL
+path — you MUST compose nested group/router prefixes into the complete path. E.g.
+  r := gin.Group("/api/v1"); r.GET("/users/:id", ...)  ->  GET /api/v1/users/{id}
+  Route::prefix('admin')->group(fn() => Route::post('tokens', ...))  ->  POST /admin/tokens
+Convert framework path params to {braces}: `:id`/`<id>`/`{id}` -> {id}.
+
+HARD RULES:
+- Extract from the ACTUAL route definitions only. Include every real business
+  route; a rich admin product legitimately has dozens. Do NOT invent routes not
+  present in the code.
+- Resolve ALL prefixes: trace router groups, sub-routers, mounted routers, and
+  route-file includes to build each full path. A wrong prefix makes the endpoint
+  dead, so get the prefix chain right.
+- For each route, list its path params and (for write routes) the JSON body field
+  names if visible in the handler/DTO; omit if not evident.
+- Skip auth/login/logout/health/metrics/static/websocket/swagger routes.
+- Skip destructive bulk/all deletes (single-item delete is fine).
+
+Return COMPACT JSON (short strings; every real route you find):
+{"endpoints":[
+  {"method":"GET","path":"/api/v1/...","summary":"≤10 words (from handler name/comment)",
+   "params":{"name":{"in":"query|path","required":true|false,"type":"string"}},
+   "body_fields":["field1","field2"]}
+]}"""
+
 # ── Mode B: curate business operations from a real endpoint catalogue ───────────
 SELECT_FROM_SPEC = """\
 You are the capability-synthesis module of a self-adapting enterprise-integration

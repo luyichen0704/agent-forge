@@ -32,8 +32,9 @@ from app.services import targets
 from app.services import graphql_disco
 from app.services import xmlrpc_disco
 from app.services import s3_disco
+from app.services import source_disco
 from app.services.exploration_prompts import (
-    DESCRIBE_METADATA, NAME_ENDPOINTS, PROMPT_VERSION, PROPOSE_ENDPOINTS,
+    DESCRIBE_METADATA, EXTRACT_ROUTES, NAME_ENDPOINTS, PROMPT_VERSION, PROPOSE_ENDPOINTS,
 )
 from app.config import settings
 from app.services.llm import explorer_llm, explorer_model
@@ -93,6 +94,41 @@ def _infer_kind(method: str, *texts: str) -> str:
     if _READ_RE.search(blob):
         return "query"
     return "mutation"
+
+
+async def _extract_from_source(db, job_id, cfg, prof) -> list[dict] | None:
+    """Discover endpoints from the target's own source code (route definitions).
+    Acquires the source (local path or shallow clone), locates the route files, and
+    has the LLM extract every real route (composing group prefixes). Returns a
+    deduped endpoint list, or None if the source is unavailable / yields nothing."""
+    src = cfg.get("source") or {}
+    root = await source_disco.acquire_source(src)
+    if not root:
+        await _emit(db, job_id, "warn", {"stage": "source",
+                                         "error": "source unavailable (clone failed or path missing)"})
+        await db.commit()
+        return None
+    files = source_disco.find_route_files(root)
+    if not files:
+        await _emit(db, job_id, "warn", {"stage": "source", "error": "no route-definition files found"})
+        await db.commit()
+        return None
+    chunks = source_disco.route_bundle(files)
+    by_key: dict = {}
+    for chunk in chunks:
+        try:
+            d, _ = await explorer_llm.structured(explorer_model(prof.model), EXTRACT_ROUTES,
+                                                 chunk, temperature=prof.temperature)
+            for e in targets.normalize_manual(d.get("endpoints") or []):
+                by_key.setdefault((e["method"], e["path"]), e)
+        except Exception:  # noqa: BLE001 — a failed chunk is not fatal; keep the rest
+            continue
+    eps = list(by_key.values())
+    await _emit(db, job_id, "source", {"files": len(files), "chunks": len(chunks),
+                                       "endpoints": len(eps),
+                                       "repo": src.get("repo") or src.get("path")})
+    await db.commit()
+    return eps or None
 
 
 def _graphql_ops_list(endpoints: list[dict]) -> list[dict]:
@@ -173,9 +209,19 @@ async def _discover_endpoints(db, job_id, source, cfg, prof) -> tuple[list[dict]
             await db.commit()
             return s3_eps, "s3", f"{cfg.get('base_url','')}"
     spec_url, spec = await targets.discover_spec(cfg)
+    # PREFERRED when no served spec but the target is open-source: extract endpoints
+    # from its OWN route definitions (ground truth) instead of guessing from the
+    # product name. Still probe-verified below to catch source/instance version drift.
+    src_eps = (await _extract_from_source(db, job_id, cfg, prof)
+               if (spec is None and cfg.get("source")) else None)
     if spec is not None:
         endpoints = targets.summarize_endpoints(spec)
         mode = "openapi"
+    elif src_eps and (verified := await targets.validate_endpoints(cfg, src_eps)):
+        await _emit(db, job_id, "verify", {"proposed": len(src_eps), "verified": len(verified)})
+        await db.commit()
+        endpoints = verified
+        mode = "source"
     else:
         # no machine-readable spec → LLM proposes, then we verify against reality.
         # MULTI-PASS: complex systems have far more endpoints than one call yields,
