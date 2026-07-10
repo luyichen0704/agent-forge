@@ -12,6 +12,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agents import orchestrator
 from app.db import get_db
 from app.deps import Principal, get_principal
+from app.models.chat import PlanStep
+from app.models.sources import DataSource
+
+# write-intent verbs — a request naming one of these expects a create/change
+_WRITE_INTENT = ("新建", "创建", "建一个", "建个", "添加", "新增", "增加", "修改", "更新",
+                 "改成", "删除", "移除", "发送", "发布", "开通", "创建一个", "录入", "登记",
+                 "create", "add", "update", "delete", "send", "publish", "new ")
+
+
+def _looks_like_write(text: str) -> bool:
+    t = text.lower()
+    return any(w in text or w in t for w in _WRITE_INTENT)
 from app.models.chat import ChatMessage, ChatSession, ExecutionPlan, PlanStep
 
 router = APIRouter(tags=["chat"])
@@ -41,15 +53,37 @@ async def list_sessions(p: Principal = Depends(get_principal), db: AsyncSession 
             .order_by(ChatSession.created_at.desc())
         )
     ).scalars().all()
-    return {"items": [{"id": str(s.id), "title": s.title} for s in rows]}
+    # resolve bound-system names so the UI switcher shows the real scope
+    src_ids = {s.source_id for s in rows if s.source_id}
+    names: dict = {}
+    if src_ids:
+        srows = (await db.execute(
+            select(DataSource.id, DataSource.name).where(DataSource.id.in_(src_ids)))).all()
+        names = {sid: name for sid, name in srows}
+    return {"items": [{
+        "id": str(s.id), "title": s.title,
+        "source_id": str(s.source_id) if s.source_id else None,
+        "source_name": names.get(s.source_id),
+        "created_at": s.created_at.isoformat() if s.created_at else None,
+    } for s in rows]}
+
+
+class SessionIn(BaseModel):
+    title: str | None = None
+    source_id: uuid.UUID | None = None  # scope planning to one system (optional)
 
 
 @router.post("/chat/sessions")
-async def create_session(p: Principal = Depends(get_principal), db: AsyncSession = Depends(get_db)) -> dict:
-    s = ChatSession(tenant_id=p.tenant_id, user_id=p.user.id, title="新会话")
+async def create_session(
+    body: SessionIn | None = None,
+    p: Principal = Depends(get_principal), db: AsyncSession = Depends(get_db),
+) -> dict:
+    body = body or SessionIn()
+    s = ChatSession(tenant_id=p.tenant_id, user_id=p.user.id,
+                    title=(body.title or "新会话")[:160], source_id=body.source_id)
     db.add(s)
     await db.commit()
-    return {"id": str(s.id), "title": s.title}
+    return {"id": str(s.id), "title": s.title, "source_id": str(s.source_id) if s.source_id else None}
 
 
 @router.get("/chat/sessions/{session_id}/messages")
@@ -80,6 +114,67 @@ class MessageIn(BaseModel):
     content: str
 
 
+# transport-envelope noise that means nothing to a business user
+_NOISE_KEYS = {"success", "message", "code", "msg", "status", "error", "errors",
+               "total", "page", "page_size", "per_page", "count"}
+
+
+def _human_row(r: dict) -> str:
+    pairs = []
+    for k, v in r.items():
+        if k in _NOISE_KEYS or isinstance(v, (dict, list)):
+            continue  # skip envelope noise + nested structures
+        s = str(v)
+        if s == "":
+            continue
+        pairs.append(f"{k}: {s[:40] + '…' if len(s) > 40 else s}")
+        if len(pairs) >= 4:
+            break
+    if not pairs:  # fall back to whatever scalar fields exist (still skip noise)
+        for k, v in list(r.items())[:4]:
+            if k not in _NOISE_KEYS and not isinstance(v, (dict, list)) and str(v) != "":
+                pairs.append(f"{k}: {str(v)[:40]}")
+                if len(pairs) >= 3:
+                    break
+    return "，".join(pairs) or "（1 条记录）"
+
+
+def _result_reply(plan) -> str:
+    """Plain-language execution summary for domain experts (no tech jargon)."""
+    ctx = getattr(plan, "exec_context", None)
+    if not ctx:
+        return f"已完成：{plan.intent}"
+    rows = ctx.get("rows") or []
+    steps = ctx.get("steps") or []
+    errors = ctx.get("query_errors") or []
+    lines: list[str] = []
+    queries = [s for s in steps if s["kind"] == "query"]
+    writes = [s for s in steps if s["kind"] == "write"]
+    if queries:
+        real_rows = [r for r in rows if not (isinstance(r, dict) and set(r) == {"error"})]
+        total = ctx.get("total_hint")
+        if real_rows:
+            if isinstance(total, int) and total > len(real_rows):
+                lines.append(f"查询完成，共 {total} 条数据（本页显示 {len(real_rows)} 条），例如：")
+            else:
+                lines.append(f"查询完成，共找到 {len(real_rows)} 条数据，例如：")
+            lines += [f"· {_human_row(r)}" for r in real_rows[:3]]
+            if len(real_rows) > 3:
+                lines.append(f"（其余 {len(real_rows) - 3} 条可在「数据流」页查看）")
+        elif "not_connected" in errors:
+            lines.append("这个操作还没有连通到真实系统（尚未完成对接），所以查不到数据。请联系管理员完成该系统的对接后再试。")
+        elif errors:
+            lines.append("查询时访问业务系统失败了（已记录详细原因，可在「审计」页查看）。可能是目标不存在或参数不对，请换个条件或联系管理员。")
+        else:
+            lines.append("查询完成，但没有找到符合条件的数据。可以换个说法或放宽条件再试。")
+    for s in writes:
+        if s["status"] == "done":
+            lines.append(f"✅ 已完成：{s['label']}")
+        else:
+            lines.append(f"⚠️ 未成功：{s['label']}。失败原因已记录在「审计」页，数据没有被改动。")
+    return "\n".join(lines) or f"已完成：{plan.intent}"
+
+
 @router.post("/chat/sessions/{session_id}/messages")
 async def send_message(
     session_id: uuid.UUID, body: MessageIn,
@@ -99,18 +194,36 @@ async def send_message(
 
     plan = await orchestrator.create_plan(
         db, tenant_id=p.tenant_id, session_id=session_id,
-        identity=p.identity, instruction=body.content,
+        identity=p.identity, instruction=body.content, source_id=s.source_id,
     )
 
+    n_steps = len((
+        await db.execute(select(PlanStep).where(PlanStep.plan_id == plan.id))
+    ).scalars().all())
+    # write intent in the request but the plan has no write step → the system
+    # exposes no matching write operation; say so honestly instead of masking it.
+    wants_write = _looks_like_write(body.content)
+    write_note = ("这个系统目前只开通了查询类操作，还不能执行新建/修改，已按查询处理。"
+                  "如需真正写入，请联系管理员开通对应的写操作。\n\n"
+                  if (wants_write and plan.writes == 0 and n_steps) else "")
+
     if plan.status == "denied":
-        reply = "该请求被策略拒绝，未生成可执行计划。"
+        reply = "这个请求超出了你的权限范围，没有执行。如需办理，请联系管理员开通相应权限。"
+    elif not n_steps:
+        reply = ("这个系统里目前没有能满足这个请求的功能，所以没有执行。"
+                 + ("如果你需要新建/修改类操作，请联系管理员开通对应的写操作。" if wants_write else
+                    "可以换种问法，或让管理员确认该系统是否已开通相关能力。"))
     elif plan.required_confirm_level == "auto":
         # no human gate → execute the (read-only) plan now and report truthfully
         plan = await orchestrator.confirm_plan(db, plan, approver=p.identity)
-        reply = (f"已规划并执行：{plan.intent}" if plan.status == "done"
-                 else f"已规划，但执行未完全成功（{plan.status}）。")
+        reply = write_note + (_result_reply(plan) if plan.status == "done"
+                 else f"已生成方案，但执行没有完全成功。{_result_reply(plan)}".strip())
+    elif plan.required_confirm_level == "dual":
+        reply = (f"我准备好了这个方案（含 {plan.writes} 个修改动作）。这类操作影响较大，"
+                 "需要另一位管理员在「审批」页同意后，你再点「确认执行」。")
     else:
-        reply = f"我将执行以下操作，涉及 {plan.writes} 个写操作，需要确认（{plan.required_confirm_level}）。"
+        reply = (f"我准备好了这个方案（含 {plan.writes} 个修改动作）。"
+                 "请核对下方步骤，点「确认执行」后才会真正生效。")
 
     plan_data = await _serialize_plan(db, plan)
 
@@ -148,9 +261,20 @@ async def confirm_plan(
 ) -> dict:
     plan = await _owned_plan(db, p, plan_id)
     plan = await orchestrator.confirm_plan(db, plan, approver=p.identity)
+    reply = None
+    if plan.status == "failed":
+        reply = "很抱歉，这个操作没能执行成功（方案在执行时出错，已记录在「审计」页）。数据没有被改动，请稍后重试或换种说法。"
+    elif plan.status in ("done", "partial_failed") and getattr(plan, "exec_context", None):
+        # surface the real outcome in the conversation, in plain language
+        reply = _result_reply(plan)
+    if reply:
+        db.add(ChatMessage(session_id=plan.session_id, role="assistant", content=reply,
+                           plan_id=plan.id, created_at=datetime.now(timezone.utc)))
     await db.commit()
     data = await _serialize_plan(db, plan)
     data["blocked"] = plan.status not in ("done", "executing")
+    if reply:
+        data["reply"] = reply
     return data
 
 

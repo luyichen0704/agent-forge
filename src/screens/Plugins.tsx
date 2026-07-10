@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { Icon, Dot, Note, Tag } from '../components/kit';
 import { useApp } from '../lib/appContext';
 import { usePlugins } from '../features/plugins';
+import { ifaceLabel, implLabel } from '../lib/labels';
 
 // treeSel mapping for plugins screen:
 // 0 = all, 1 = Explorer, 2 = Executor, 3 = PolicyEngine, 4 = AuditSink, 5 = LLMAdapter
@@ -53,14 +54,14 @@ export function PluginsMain() {
                   <Icon n={p.icon} s={15} c="var(--ink-2)" />
                 </span>
                 <div className="col fill">
-                  <span className="b sm mono">{p.iface}</span>
+                  <span className="b sm">{ifaceLabel(p.iface)}</span>
                   <span className="xs muted">{p.sub}</span>
                 </div>
                 <span className="xs muted tnum">{p.impls.filter((i) => i.status === 'ok').length}/{p.impls.length}</span>
               </div>
               <div className="row gap6 wrap">
                 {p.impls.map((im, idx) => (
-                  <span key={idx} className="swatch"><Dot k={im.status === 'ok' ? 'ok' : im.status === 'wait' ? 'wait' : 'off'} />{im.name}</span>
+                  <span key={idx} className="swatch" title={im.name}><Dot k={im.status === 'ok' ? 'ok' : im.status === 'wait' ? 'wait' : 'off'} />{implLabel(im.name)}</span>
                 ))}
               </div>
             </div>
@@ -88,21 +89,21 @@ export function PluginsAside() {
   return (
     <div className="col fill">
       <div className="pad14 row between vcenter" style={{ borderBottom: '1px solid var(--line-2)' }}>
-        <span className="h3 mono">{p.iface}</span>
-        <Tag k="trusted">稳定接口</Tag>
+        <span className="h3">{ifaceLabel(p.iface)}</span>
+        <Tag k="trusted">标准接口</Tag>
       </div>
       <div className="col gap10 pad14 fill scroll">
-        <span className="eyebrow">接口定义 interface</span>
+        <span className="eyebrow">接口定义（开发者）</span>
         <div className="code">{p.code}</div>
         <div className="divln" />
         <span className="eyebrow">已注册实现</span>
         {p.impls.map((im, idx) => (
-          <div key={idx} className="row vcenter gap8 sm muted2">
-            <Dot k={im.status === 'ok' ? 'ok' : im.status === 'wait' ? 'wait' : 'off'} />{im.name}
+          <div key={idx} className="row vcenter gap8 sm muted2" title={im.name}>
+            <Dot k={im.status === 'ok' ? 'ok' : im.status === 'wait' ? 'wait' : 'off'} />{implLabel(im.name)}
             <span className="fill" /><span className="xs muted mono">{im.version}</span>
           </div>
         ))}
-        <button className="row vcenter gap8 sm muted" onClick={() => toast(`为 ${p.iface} 接入新实现（演示）`, 'info')}
+        <button className="row vcenter gap8 sm muted" onClick={() => toast(`为「${ifaceLabel(p.iface)}」接入新实现（演示）`, 'info')}
           style={{ all: 'unset', cursor: 'pointer', display: 'flex', color: 'var(--ink-3)' }}>
           <Icon n="plus" s={13} />接入新实现
         </button>

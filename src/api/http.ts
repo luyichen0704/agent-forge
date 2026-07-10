@@ -27,7 +27,21 @@ export class ApiError extends Error {
   }
 }
 
+/** Demo-mode pluggable adapter. Returns a plain value (no Response object). */
+export type DemoAdapter = (method: string, path: string, body?: unknown) => Promise<unknown>;
+let _demoAdapter: DemoAdapter | null = null;
+export function setDemoAdapter(a: DemoAdapter | null): void { _demoAdapter = a; }
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  if (_demoAdapter) {
+    try {
+      return (await _demoAdapter(method, path, body)) as T;
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 401) setToken(null);
+      throw e;
+    }
+  }
+
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   const token = getToken();
   if (token) headers.Authorization = `Bearer ${token}`;

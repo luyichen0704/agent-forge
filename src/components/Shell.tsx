@@ -9,6 +9,7 @@ import { TourProvider, useTour } from '../tour/TourProvider';
 import { TourOverlay } from '../tour/TourOverlay';
 import { shouldOfferOnboarding } from '../tour/engine';
 import { WelcomeModal } from './WelcomeModal';
+import { ThemeToggle } from './ThemeToggle';
 import type { Role, ScreenKey } from '../api/types';
 
 function clickable(onClick: () => void) {
@@ -165,7 +166,7 @@ function ShellInner() {
             <div className="eyebrow" style={{ padding: '0 16px 2px' }}>
               {activeNavItem?.cn}
               {activeDesc?.step && (
-                <span style={{ color: 'var(--accent)', marginLeft: 5, fontSize: 11, letterSpacing: 0 }}>
+                <span style={{ color: 'var(--accent-ink)', marginLeft: 5, fontSize: 11, letterSpacing: 0 }}>
                   {STEP_BADGES[activeDesc.step]} {activeDesc.stepLabel}
                 </span>
               )}
@@ -184,13 +185,19 @@ function ShellInner() {
               </div>
             ))}
           </div>
-          <div style={{ padding: 10, borderTop: '1px solid var(--line-2)' }} className="col gap6">
-            <span className="eyebrow">身份 · 切换看权限差异</span>
-            <div className="roles" data-tour="role-switch">
-              {ROLES.map(([k, label]) => (
-                <span key={k} className={role === k ? 'on' : ''} style={{ cursor: 'pointer' }}
-                  onClick={() => switchRole(k)}>{label}</span>
-              ))}
+          <div style={{ padding: 10, borderTop: '1px solid var(--line-2)' }} className="col gap8">
+            <div className="col gap6">
+              <span className="eyebrow">外观 · 主题</span>
+              <ThemeToggle />
+            </div>
+            <div className="col gap6">
+              <span className="eyebrow">身份 · 切换看权限差异</span>
+              <div className="roles" data-tour="role-switch">
+                {ROLES.map(([k, label]) => (
+                  <span key={k} className={role === k ? 'on' : ''} style={{ cursor: 'pointer' }}
+                    onClick={() => switchRole(k)}>{label}</span>
+                ))}
+              </div>
             </div>
           </div>
         </div>
@@ -204,7 +211,7 @@ function ShellInner() {
               <span className="sm muted">{s.sub}</span>
             </div>
             <div className="row vcenter gap8">
-              {active === 'chat' && <Chip ic="shield">CaMeL 已启用</Chip>}
+              {active === 'chat' && <Chip ic="shield">安全护栏已启用</Chip>}
               <Chip>{ROLES.find(([k]) => k === role)?.[1] ?? role}</Chip>
             </div>
           </div>

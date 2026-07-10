@@ -27,5 +27,6 @@ class WorkerSettings:
     functions = [explore_task]
     redis_settings = redis_settings()
     max_jobs = 10
-    job_timeout = 600  # exploration may call the LLM several times
+    # comprehensive discovery names hundreds of endpoints in many LLM batches
+    job_timeout = 3600
     keep_result = 3600

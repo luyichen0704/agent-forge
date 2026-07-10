@@ -44,7 +44,28 @@ Return JSON with this exact shape:
   ],
   "policy_hints": ["<short hint>", ...]
 }
-Only use op_key values present in the catalogue. Keep steps minimal and correct."""
+Only use op_key values present in the catalogue. Keep steps minimal and correct.
+In `reasoning_summary` and every `label`, refer to operations by their Chinese
+business meaning (from the catalogue description), NEVER the raw English op_key
+or field name — the reader is a non-technical domain expert. E.g. write
+「查询员工列表」, not "staffUsers 查询操作".
+
+CRITICAL — fill `args` with the CONCRETE VALUES the user gave. Each catalogue
+line shows the operation's argument names after `args:` (path/query params) and
+`body:` (fields to send). For EVERY step, especially WRITE steps, extract the
+literal values from the user's instruction and put them in `args` under those
+EXACT names. Examples: user says «新建名为 QANAME 配额无限的令牌» and the op is
+`token.create | body: name, remain_quota, unlimited_quota` → args must be
+{"name":"QANAME","unlimited_quota":true}. User says «查 owner=acme repo=web 的
+分支» with `args: owner(path*), repo(path*)` → args {"owner":"acme","repo":"web"}.
+Required (*) path params MUST be provided — if the user did not give a required
+value and it cannot be chained from a prior step via "$stepN.field", do NOT emit
+that step; instead add a policy_hint that the value is missing. Never emit a
+write step with empty args when the user specified concrete values.
+All natural-language fields you write — intent, reasoning_summary, every step
+label, and policy_hints — MUST be in the SAME LANGUAGE as the user's instruction
+(Chinese if the instruction is Chinese). Never write these in English for a
+Chinese user; op_key values stay as given."""
 
 
 async def plan(
@@ -56,10 +77,15 @@ async def plan(
     instruction: str,
     operations: list[dict],
 ) -> dict:
-    catalogue = "\n".join(
-        f"- {o['op_key']} ({o['kind']}, confirm={o['confirm_level']}, roles={o['roles']}): {o.get('desc','')}"
-        for o in operations
-    ) or "- (none available)"
+    def _line(o: dict) -> str:
+        line = f"- {o['op_key']} ({o['kind']}, confirm={o['confirm_level']}, roles={o['roles']}): {o.get('desc', '')}"
+        if o.get("sig"):
+            line += f" | args: {o['sig']}"
+        if o.get("body"):
+            line += f" | body: {o['body']}"
+        return line
+
+    catalogue = "\n".join(_line(o) for o in operations) or "- (none available)"
 
     user = (
         f"Caller role: {role}\n"
@@ -69,7 +95,7 @@ async def plan(
 
     prof = await resolve_profile(db, tenant_id, "pllm")
     draft, result = await llm.structured(prof.model, SYSTEM, user,
-                                         temperature=prof.temperature, max_tokens=prof.max_tokens)
+                                         temperature=prof.temperature)
     draft = _normalise(draft)
 
     run = LLMRun(
@@ -108,11 +134,24 @@ def _normalise(draft: dict) -> dict:
     confirm = draft.get("required_confirm_level")
     if confirm not in {"auto", "confirm", "dual"}:
         confirm = "confirm" if writes else "auto"
+    # op_key hiding: the model often echoes the raw English op_key in its prose
+    # despite instructions. Deterministically swap each op_key for its human label
+    # so a domain expert never sees "staffUsers"/"hardware.list" in the explanation.
+    # Longest keys first, so a key that is a prefix of another can't partial-match.
+    renames = sorted(((s["op_key"], s["label"]) for s in steps if s.get("op_key")),
+                     key=lambda kv: len(kv[0]), reverse=True)
+
+    def _humanize(text: str) -> str:
+        for key, label in renames:
+            if key and label and key in text:
+                text = text.replace(key, label)
+        return text
+
     return {
-        "intent": str(draft.get("intent", "")).strip()[:300],
-        "reasoning_summary": str(draft.get("reasoning_summary", "")).strip()[:600],
+        "intent": _humanize(str(draft.get("intent", "")).strip()[:300]),
+        "reasoning_summary": _humanize(str(draft.get("reasoning_summary", "")).strip()[:600]),
         "writes": writes,
         "required_confirm_level": confirm,
         "steps": steps,
-        "policy_hints": [str(h)[:120] for h in draft.get("policy_hints", [])][:6],
+        "policy_hints": [_humanize(str(h)[:120]) for h in draft.get("policy_hints", [])][:6],
     }

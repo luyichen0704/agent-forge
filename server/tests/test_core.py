@@ -60,6 +60,36 @@ def test_customer_scope_injection():
     assert d.injected.get("user_id") == "cust-1"  # forced to caller
 
 
+# ---- planner op_key hiding (domain-expert plain language) ----
+def test_normalise_hides_raw_op_key_in_prose():
+    from app.services.planner import _normalise
+    draft = {
+        "intent": "查询 staffUsers",
+        "reasoning_summary": "直接使用 staffUsers 查询操作获取员工列表。",
+        "steps": [{"step_no": 1, "kind": "query", "op_key": "staffUsers",
+                   "label": "查询员工用户列表", "capability_out": "data", "args": {}}],
+        "policy_hints": ["staffUsers 无需确认"],
+    }
+    out = _normalise(draft)
+    assert "staffUsers" not in out["reasoning_summary"]
+    assert "staffUsers" not in out["intent"]
+    assert "staffUsers" not in out["policy_hints"][0]
+    assert out["reasoning_summary"] == "直接使用 查询员工用户列表 查询操作获取员工列表。"
+
+
+def test_normalise_op_key_replace_is_prefix_safe():
+    # longest-first replacement: "users" must not partial-match inside another key
+    from app.services.planner import _normalise
+    draft = {"intent": "", "reasoning_summary": "users 与 user 操作", "policy_hints": [],
+             "steps": [
+                 {"step_no": 1, "kind": "query", "op_key": "users", "label": "查询用户",
+                  "capability_out": "data", "args": {}},
+                 {"step_no": 2, "kind": "query", "op_key": "user", "label": "单用户",
+                  "capability_out": "data", "args": {}}]}
+    out = _normalise(draft)
+    assert out["reasoning_summary"] == "查询用户 与 单用户 操作"
+
+
 # ---- audit hash chain ----
 def test_hash_chain_detects_tamper():
     h1 = audit.compute_hash(1, "A", {"x": 1}, audit.GENESIS)

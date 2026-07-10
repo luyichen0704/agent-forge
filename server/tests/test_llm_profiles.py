@@ -25,16 +25,29 @@ async def test_profiles_listed_with_defaults():
 
 
 async def test_admin_can_switch_model_non_admin_cannot():
+    from app.config import settings
     async with await _client() as c:
         admin = await _login(c, "admin")
-        r = await c.patch("/llm-profiles/qllm", headers={"Authorization": f"Bearer {admin}"},
-                          json={"model": "claude-haiku-4-5", "max_tokens": 800})
-        assert r.status_code == 200 and r.json()["max_tokens"] == 800
+        # These tests share the LIVE DB, so mutating the qllm profile and not
+        # restoring it corrupts every later test/run: the LLM base URL is DeepSeek,
+        # so leaving a non-DeepSeek model (or a low max_tokens) makes the NEXT real
+        # LLM call 400. Capture, mutate, then restore to the DeepSeek default.
+        items = (await c.get("/llm-profiles", headers={"Authorization": f"Bearer {admin}"})).json()["items"]
+        orig = {p["role"]: p for p in items}["qllm"]
+        try:
+            r = await c.patch("/llm-profiles/qllm", headers={"Authorization": f"Bearer {admin}"},
+                              json={"model": "deepseek-v4-flash", "max_tokens": 800})
+            assert r.status_code == 200 and r.json()["max_tokens"] == 800
 
-        emp = await _login(c, "employee")
-        r2 = await c.patch("/llm-profiles/qllm", headers={"Authorization": f"Bearer {emp}"},
-                           json={"model": "x"})
-        assert r2.status_code == 403
+            emp = await _login(c, "employee")
+            r2 = await c.patch("/llm-profiles/qllm", headers={"Authorization": f"Bearer {emp}"},
+                               json={"model": "x"})
+            assert r2.status_code == 403
+        finally:
+            # self-heal: force the model back to the DeepSeek default regardless of
+            # what it was before (a prior broken run may have left it corrupted).
+            await c.patch("/llm-profiles/qllm", headers={"Authorization": f"Bearer {admin}"},
+                          json={"model": settings.qllm_model, "max_tokens": orig["max_tokens"]})
 
 
 async def test_resolver_falls_back_to_env_without_row():

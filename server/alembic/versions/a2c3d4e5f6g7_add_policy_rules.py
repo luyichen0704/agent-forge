@@ -1,7 +1,7 @@
 """add policy_rules
 
 Revision ID: a2c3d4e5f6g7
-Revises: e075f1384de3
+Revises: b8d5f0a3c216
 Create Date: 2025-07-11
 
 """
@@ -13,7 +13,7 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision: str = "a2c3d4e5f6g7"
-down_revision: Union[str, None] = "e075f1384de3"
+down_revision: Union[str, None] = "b8d5f0a3c216"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

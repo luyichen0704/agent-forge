@@ -16,6 +16,11 @@ class ChatSession(Base, TimestampMixin):
     tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id"), nullable=False, index=True)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
     title: Mapped[str] = mapped_column(String(160), default="新会话", nullable=False)
+    # optional: scope planning to one system so the P-LLM catalogue isn't diluted
+    # by operations from other registered systems (null = all systems in scope)
+    source_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("data_sources.id"), nullable=True, index=True
+    )
 
 
 class ChatMessage(Base):

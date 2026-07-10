@@ -10,9 +10,12 @@ export function useSessions() {
   });
 }
 
+export interface CreateSessionInput { title?: string; source_id?: string | null }
+
 export function useEnsureSession() {
   return useMutation({
-    mutationFn: () => api.post<ChatSession>('/chat/sessions'),
+    mutationFn: (input?: CreateSessionInput) =>
+      api.post<ChatSession>('/chat/sessions', input ? { ...input } : undefined),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['chat', 'sessions'] }),
   });
 }

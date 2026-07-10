@@ -1,3 +1,4 @@
+import { Fragment } from 'react';
 import { markWelcomeSeen } from '../tour/engine';
 import { useTour } from '../tour/TourProvider';
 import { Icon } from './kit/Icon';
@@ -32,7 +33,7 @@ export function WelcomeModal({ onClose }: WelcomeModalProps) {
             <span className="h2">agent·forge</span>
           </div>
           <p className="sm muted2" style={{ margin: 0, lineHeight: 1.55 }}>
-            让 AI 用自然语言操作企业系统——每一次写操作都可控、可审、可回滚（CaMeL 架构）。
+            让 AI 用自然语言操作企业系统——每一次改动都可控、可审、可回滚。
           </p>
         </div>
 
@@ -63,7 +64,7 @@ export function WelcomeModal({ onClose }: WelcomeModalProps) {
                 <span className="b sm">核心保障</span>
               </div>
               <p className="xs muted" style={{ margin: 0, lineHeight: 1.5 }}>
-                CaMeL 架构：能力标注防止数据被滥用、写操作必须人审、hash 链不可篡改。
+                三重保障：标注数据来源防止被滥用、写操作必须人工审核、操作记录完整不可篡改。
               </p>
             </div>
           </div>
@@ -73,17 +74,17 @@ export function WelcomeModal({ onClose }: WelcomeModalProps) {
             <div className="eyebrow" style={{ marginBottom: 8 }}>工作流 · 三步完成一次业务操作</div>
             <div className="tw-workflow">
               {WORKFLOW_STEPS.map((label, i) => (
-                <>
-                  <div key={label} className="tw-step-pill">
-                    <span style={{ color: 'var(--accent)', fontWeight: 700, fontSize: 13 }}>
+                <Fragment key={label}>
+                  <div className="tw-step-pill">
+                    <span style={{ color: 'var(--accent-ink)', fontWeight: 700, fontSize: 13 }}>
                       {STEP_BADGES[(i + 1) as 1 | 2 | 3]}
                     </span>
                     {label}
                   </div>
                   {i < WORKFLOW_STEPS.length - 1 && (
-                    <span key={`arr-${i}`} className="tw-arrow">→</span>
+                    <span className="tw-arrow">→</span>
                   )}
-                </>
+                </Fragment>
               ))}
             </div>
           </div>

@@ -15,6 +15,10 @@ class Operation(Base, TimestampMixin):
 
     id: Mapped[uuid.UUID] = uuid_pk()
     tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id"), nullable=False, index=True)
+    # which external system this operation belongs to (null = built-in demo op)
+    source_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("data_sources.id"), nullable=True, index=True
+    )
     op_key: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     kind: Mapped[str] = mapped_column(String(20), nullable=False)            # query|mutation
@@ -25,6 +29,8 @@ class Operation(Base, TimestampMixin):
     output_schema_json: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
     executor_binding: Mapped[str | None] = mapped_column(String(80), nullable=True)
     rollback_binding: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    # real external call binding: {"source_id":..,"method":..,"path":..,"params":{..},"body_fields":[..]}
+    binding_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     policy_ref: Mapped[str | None] = mapped_column(String(120), nullable=True)
     created_from_job_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("exploration_jobs.id"), nullable=True
