@@ -1,0 +1,3 @@
+# Map commit emails to canonical identities for contributor graphs.
+# GitHub uses this to associate commits with the correct GitHub accounts.
+luyichen0704 <luyichen0704@sina.com> <luyichen0704@github.com>
